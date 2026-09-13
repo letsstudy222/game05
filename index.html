@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Đường Ven Biển — Vietnam Coastal Drive</title>
+<meta name="description" content="Lái xe khám phá cung đường ven biển Việt Nam trong trình duyệt." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;500;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#06181e;
+    --hud:rgba(6,24,30,.68);
+    --line:rgba(242,247,245,.16);
+    --foam:#f2f7f5;
+    --sand:#e8d6b3;
+    --jade:#79d2b6;
+    --lacquer:#e2483a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:var(--ink)}
+  body{
+    font-family:"Be Vietnam Pro",system-ui,sans-serif;
+    color:var(--foam);
+    -webkit-font-smoothing:antialiased;
+    touch-action:none;
+  }
+  canvas{display:block}
+
+  /* ---------- loading ---------- */
+  #boot{
+    position:fixed;inset:0;z-index:50;
+    display:grid;place-content:center;justify-items:center;gap:1.4rem;
+    background:linear-gradient(180deg,#04222b 0%,#06181e 60%,#0a2a24 100%);
+    text-align:center;padding:2rem;
+  }
+  #boot h1{
+    font-weight:800;font-size:clamp(1.9rem,7vw,3.2rem);
+    letter-spacing:-.02em;line-height:1.05;
+  }
+  #boot h1 span{display:block;font-weight:300;font-size:.42em;letter-spacing:.06em;color:var(--sand);margin-top:.7em}
+  #bootbar{width:min(260px,60vw);height:2px;background:var(--line);overflow:hidden}
+  #bootbar i{display:block;height:100%;width:0%;background:var(--jade);transition:width .3s ease}
+  #boot p{font-weight:300;font-size:.85rem;color:rgba(242,247,245,.6);max-width:34ch;line-height:1.6}
+  #start{
+    font:inherit;font-weight:500;font-size:1rem;
+    padding:.85rem 2.2rem;border:1px solid var(--jade);border-radius:999px;
+    background:transparent;color:var(--jade);cursor:pointer;
+    opacity:0;pointer-events:none;transition:opacity .4s,background .2s,color .2s;
+  }
+  #start.ready{opacity:1;pointer-events:auto}
+  #start:hover,#start:focus-visible{background:var(--jade);color:var(--ink);outline:none}
+
+  /* ---------- hud ---------- */
+  #hud{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .8s}
+  #hud.on{opacity:1}
+
+  #place{
+    position:absolute;top:max(1.1rem,env(safe-area-inset-top));left:1.1rem;
+    text-shadow:0 2px 14px rgba(0,0,0,.55);
+  }
+  #place b{display:block;font-weight:800;font-size:1.35rem;letter-spacing:-.01em}
+  #place small{display:block;font-weight:300;font-size:.72rem;color:var(--sand);margin-top:.15em}
+
+  #speed{
+    position:absolute;left:1.1rem;bottom:max(1.1rem,env(safe-area-inset-bottom));
+    display:flex;align-items:baseline;gap:.4rem;
+    text-shadow:0 2px 14px rgba(0,0,0,.55);
+  }
+  #speed b{font-weight:800;font-size:3.1rem;line-height:.9;font-variant-numeric:tabular-nums}
+  #speed i{font-style:normal;font-weight:300;font-size:.8rem;color:var(--sand)}
+  #throttle{
+    position:absolute;left:1.1rem;bottom:calc(max(1.1rem,env(safe-area-inset-bottom)) + 3.5rem);
+    width:150px;height:2px;background:var(--line)
+  }
+  #throttle i{display:block;height:100%;width:0;background:var(--jade);transition:width .12s linear}
+  #offroad{
+    position:absolute;left:1.1rem;bottom:calc(max(1.1rem,env(safe-area-inset-bottom)) + 4.4rem);
+    font-size:.68rem;font-weight:500;color:var(--lacquer);opacity:0;transition:opacity .2s
+  }
+  #offroad.on{opacity:1}
+
+  #map{
+    position:absolute;right:1.1rem;bottom:max(1.1rem,env(safe-area-inset-bottom));
+    width:132px;height:132px;border-radius:50%;
+    background:var(--hud);border:1px solid var(--line);
+    backdrop-filter:blur(6px);
+  }
+
+  #keys{
+    position:absolute;top:max(1.1rem,env(safe-area-inset-top));right:1.1rem;
+    font-weight:300;font-size:.7rem;line-height:1.9;text-align:right;
+    color:rgba(242,247,245,.68);text-shadow:0 2px 10px rgba(0,0,0,.6)
+  }
+  #keys kbd{
+    font:inherit;font-weight:500;color:var(--foam);
+    border:1px solid var(--line);border-radius:4px;padding:.05em .38em;margin-left:.3em
+  }
+
+  #touch{position:absolute;inset:0;display:none}
+  #touch button{
+    position:absolute;pointer-events:auto;
+    width:64px;height:64px;border-radius:50%;
+    background:var(--hud);border:1px solid var(--line);backdrop-filter:blur(6px);
+    color:var(--foam);font:inherit;font-size:1.4rem;font-weight:500;
+  }
+  #touch button:active{background:var(--jade);color:var(--ink)}
+  #tl{left:1.1rem;bottom:9rem}#tr{left:6rem;bottom:9rem}
+  #tg{right:1.1rem;bottom:11rem}#tb{right:6rem;bottom:11rem}
+  body.touch #touch{display:block}
+  body.touch #map{bottom:auto;top:6rem}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<div id="boot">
+  <h1>Đường Ven Biển<span>Vietnam Coastal Drive</span></h1>
+  <div id="bootbar"><i></i></div>
+  <p id="bootmsg">Đang dựng bờ biển, mặt đường và phố nhà ống…</p>
+  <button id="start">Lên xe</button>
+</div>
+
+<div id="hud">
+  <div id="place"><b>—</b><small>Quốc lộ ven biển</small></div>
+  <div id="keys">
+    di chuyển <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><br>
+    phanh tay <kbd>Space</kbd><br>
+    góc nhìn <kbd>C</kbd><br>
+    ngày / đêm <kbd>N</kbd><br>
+    quay về đường <kbd>R</kbd>
+  </div>
+  <div id="offroad">Đang chạy ngoài mặt đường</div>
+  <div id="throttle"><i></i></div>
+  <div id="speed"><b>0</b><i>km/h</i></div>
+  <canvas id="map" width="264" height="264"></canvas>
+  <div id="touch">
+    <button id="tl" aria-label="Rẽ trái">◀</button>
+    <button id="tr" aria-label="Rẽ phải">▶</button>
+    <button id="tb" aria-label="Lùi / phanh">▼</button>
+    <button id="tg" aria-label="Tăng ga">▲</button>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

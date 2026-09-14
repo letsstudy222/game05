@@ -1,302 +1,433 @@
-// main.js — renderer, sky, cameras, input, HUD.
+// main.js — renderer, sky, lights, cameras, input, HUD, loop.
 
 import * as THREE from 'three';
-import { Sky } from 'three/addons/objects/Sky.js';
-import { buildWorld, coastZ, roadZ, districtAt } from './world.js';
-import { createCar } from './vehicle.js';
-import { GOOGLE_3D_TILES_KEY, attachGoogleTiles } from './tiles.js';
+import {
+  buildWorld, heightAt, roadCenterX, roadTangent, districtAt, WORLD
+} from './world.js';
+import { Vehicle } from './vehicle.js';
 
-const $ = (s) => document.querySelector(s);
-const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
 
-/* ------------------------------------------------------------------ */
-/* renderer + scene                                                    */
-/* ------------------------------------------------------------------ */
+const COARSE = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+if (COARSE) document.body.classList.add('touch');
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
-renderer.setSize(innerWidth, innerHeight);
-const LOW_POWER = matchMedia('(pointer: coarse)').matches;
-renderer.shadowMap.enabled = !LOW_POWER;
+// ---------------------------------------------------------------------------
+// renderer / scene
+// ---------------------------------------------------------------------------
+
+const renderer = new THREE.WebGLRenderer({ antialias: !COARSE, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, COARSE ? 1 : 1.5));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = !COARSE;              // shadows off on phones
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.85;
+renderer.toneMappingExposure = 1.05;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2('#bcd3d6', 0.00135);
+// The far plane is deliberately tight: it is the main triangle-budget lever,
+// and the coastal haze hides the cut.
+const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.35, 1400);
 
-const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.4, 6500);
+// ---------------------------------------------------------------------------
+// day / night palettes
+// ---------------------------------------------------------------------------
 
-const sky = new Sky();
-sky.scale.setScalar(9000);   // recentred on the camera every frame
+const DAY = {
+  skyTop: new THREE.Color('#3e8fd0'), skyBottom: new THREE.Color('#cfe6ef'),
+  fog: new THREE.Color('#c3dde5'), fogNear: 260, fogFar: 1180,
+  sun: new THREE.Color('#fff3d6'), sunI: 2.05,
+  hemiSky: new THREE.Color('#bfe0f0'), hemiGround: new THREE.Color('#8a7f60'), hemiI: 0.85,
+  ambient: 0.22, exposure: 1.05, stars: 0
+};
+const NIGHT = {
+  skyTop: new THREE.Color('#050c1c'), skyBottom: new THREE.Color('#15304a'),
+  fog: new THREE.Color('#0d1b2a'), fogNear: 130, fogFar: 780,
+  sun: new THREE.Color('#9fb6d8'), sunI: 0.32,
+  hemiSky: new THREE.Color('#16283c'), hemiGround: new THREE.Color('#0b0f14'), hemiI: 0.30,
+  ambient: 0.10, exposure: 1.25, stars: 1
+};
+
+const SUN_DAY = new THREE.Vector3(-0.55, 0.62, 0.56).normalize();
+const SUN_NIGHT = new THREE.Vector3(0.42, 0.34, -0.72).normalize();
+
+scene.fog = new THREE.Fog(DAY.fog.clone(), DAY.fogNear, DAY.fogFar);
+scene.background = null;
+
+// ---------------------------------------------------------------------------
+// sky dome — rides along with the camera
+// ---------------------------------------------------------------------------
+
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  uniforms: {
+    uTop: { value: DAY.skyTop.clone() },
+    uBottom: { value: DAY.skyBottom.clone() },
+    uSun: { value: SUN_DAY.clone() },
+    uSunColor: { value: DAY.sun.clone() },
+    uStars: { value: 0 }
+  },
+  vertexShader: `
+    varying vec3 vDir;
+    void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    precision mediump float;
+    uniform vec3 uTop, uBottom, uSun, uSunColor;
+    uniform float uStars;
+    varying vec3 vDir;
+    float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    void main(){
+      vec3 d = normalize(vDir);
+      float t = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
+      vec3 col = mix(uBottom, uTop, pow(t, 0.85));
+      float s = max(dot(d, normalize(uSun)), 0.0);
+      col += uSunColor * pow(s, 220.0) * 2.2;
+      col += uSunColor * pow(s, 7.0) * 0.16;
+      if (uStars > 0.01 && d.y > 0.0) {
+        vec2 g = floor(d.xz * 190.0 / max(d.y, 0.18));
+        float n = h21(g);
+        float star = step(0.9975, n) * (0.5 + 0.5 * h21(g + 7.0));
+        col += vec3(star) * uStars * d.y;
+      }
+      gl_FragColor = vec4(col, 1.0);
+    }`
+});
+const sky = new THREE.Mesh(new THREE.SphereGeometry(1300, 24, 16), skyMat);
+sky.frustumCulled = false;
+sky.renderOrder = -10;
 scene.add(sky);
-const skyU = sky.material.uniforms;
-skyU.turbidity.value = 6;
-skyU.rayleigh.value = 1.6;
-skyU.mieCoefficient.value = 0.006;
-skyU.mieDirectionalG.value = 0.82;
 
-const sun = new THREE.DirectionalLight(0xfff2dc, 2.2);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.near = 1;
-sun.shadow.camera.far = 460;
-Object.assign(sun.shadow.camera, { left: -75, right: 75, top: 75, bottom: -75 });
-sun.shadow.camera.updateProjectionMatrix();
-sun.shadow.bias = -0.0006;
-sun.shadow.normalBias = 0.5;
-scene.add(sun, sun.target);
+// ---------------------------------------------------------------------------
+// lights — exactly one shadow caster
+// ---------------------------------------------------------------------------
 
-const hemi = new THREE.HemisphereLight(0xbfe3ec, 0x6d6146, 0.75);
+const hemi = new THREE.HemisphereLight(DAY.hemiSky, DAY.hemiGround, DAY.hemiI);
 scene.add(hemi);
 
-const sunDir = new THREE.Vector3();
-function setSun(elevationDeg, azimuthRad) {
-  const el = THREE.MathUtils.degToRad(elevationDeg);
-  sunDir.set(Math.sin(azimuthRad) * Math.cos(el), Math.sin(el), Math.cos(azimuthRad) * Math.cos(el)).normalize();
-  skyU.sunPosition.value.copy(sunDir);
-}
+const ambient = new THREE.AmbientLight(0xffffff, DAY.ambient);
+scene.add(ambient);
 
-/* ------------------------------------------------------------------ */
-/* input                                                               */
-/* ------------------------------------------------------------------ */
+const sun = new THREE.DirectionalLight(DAY.sun.clone(), DAY.sunI);
+sun.castShadow = !COARSE;
+sun.shadow.mapSize.set(COARSE ? 1024 : 2048, COARSE ? 1024 : 2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 340;
+sun.shadow.camera.left = -62;
+sun.shadow.camera.right = 62;
+sun.shadow.camera.top = 62;
+sun.shadow.camera.bottom = -62;
+sun.shadow.bias = -0.0009;
+sun.shadow.normalBias = 0.6;
+scene.add(sun);
+scene.add(sun.target);
 
-const keys = new Set();
-addEventListener('keydown', (e) => {
-  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
-  keys.add(e.code);
-  if (e.code === 'KeyC') cycleCamera();
-  if (e.code === 'KeyN') nightTarget = nightTarget > 0.5 ? 0 : 1;
-  if (e.code === 'KeyR') car.respawn();
-  if (e.code === 'KeyH') $('#hud').classList.toggle('on');
+// ---------------------------------------------------------------------------
+// input
+// ---------------------------------------------------------------------------
+
+const keys = Object.create(null);
+const input = { throttle: 0, brake: 0, steer: 0, handbrake: false };
+const touch = { up: false, down: false, left: false, right: false, hand: false };
+
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
+  if (keys[k]) return;
+  keys[k] = true;
+  if (k === 'c') cycleCamera();
+  if (k === 'n') setNight(!night);
+  if (k === 'r') respawn();
+  if (k === 'h') document.getElementById('keys').classList.toggle('hidden');
 });
-addEventListener('keyup', (e) => keys.delete(e.code));
-addEventListener('blur', () => keys.clear());
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-const touch = { g: 0, b: 0, l: 0, r: 0 };
-if (LOW_POWER) document.body.classList.add('touch');
-for (const [id, k] of [['#tg', 'g'], ['#tb', 'b'], ['#tl', 'l'], ['#tr', 'r']]) {
-  const el = $(id);
-  const on = (e) => { e.preventDefault(); touch[k] = 1; };
-  const off = (e) => { e.preventDefault(); touch[k] = 0; };
-  el.addEventListener('pointerdown', on);
-  el.addEventListener('pointerup', off);
-  el.addEventListener('pointerleave', off);
-  el.addEventListener('pointercancel', off);
+function bindTouch(id, on, off) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const down = e => { e.preventDefault(); el.classList.add('active'); on(); };
+  const up = e => { e.preventDefault(); el.classList.remove('active'); if (off) off(); };
+  el.addEventListener('pointerdown', down);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+  el.addEventListener('pointerleave', up);
 }
+bindTouch('tGas', () => touch.up = true, () => touch.up = false);
+bindTouch('tBrake', () => touch.down = true, () => touch.down = false);
+bindTouch('tLeft', () => touch.left = true, () => touch.left = false);
+bindTouch('tRight', () => touch.right = true, () => touch.right = false);
+bindTouch('tHand', () => touch.hand = true, () => touch.hand = false);
+bindTouch('tCam', () => cycleCamera());
+bindTouch('tNight', () => setNight(!night));
+bindTouch('tReset', () => respawn());
 
 function readInput() {
-  const up = keys.has('KeyW') || keys.has('ArrowUp') || touch.g;
-  const dn = keys.has('KeyS') || keys.has('ArrowDown') || touch.b;
-  const lf = keys.has('KeyA') || keys.has('ArrowLeft') || touch.l;
-  const rt = keys.has('KeyD') || keys.has('ArrowRight') || touch.r;
-  return {
-    throttle: (up ? 1 : 0) - (dn ? 1 : 0),
-    steer: (lf ? 1 : 0) - (rt ? 1 : 0),
-    handbrake: keys.has('Space'),
-  };
+  const up = keys['w'] || keys['arrowup'] || touch.up;
+  const down = keys['s'] || keys['arrowdown'] || touch.down;
+  const left = keys['a'] || keys['arrowleft'] || touch.left;
+  const right = keys['d'] || keys['arrowright'] || touch.right;
+  input.throttle = up ? 1 : 0;
+  input.brake = down ? 1 : 0;
+  input.steer = (left ? -1 : 0) + (right ? 1 : 0);
+  input.handbrake = !!(keys[' '] || touch.hand);
+  return input;
 }
 
-/* ------------------------------------------------------------------ */
-/* cameras                                                             */
-/* ------------------------------------------------------------------ */
+// ---------------------------------------------------------------------------
+// cameras
+// ---------------------------------------------------------------------------
 
-const CAMS = ['chase', 'hood', 'wide'];
-let camIdx = 0;
-function cycleCamera() { camIdx = (camIdx + 1) % CAMS.length; }
+const CAMS = ['chase', 'bonnet', 'cinematic'];
+let camMode = 0;
+function cycleCamera() { camMode = (camMode + 1) % CAMS.length; camSmooth = null; }
 
-const camPos = new THREE.Vector3();
-const camLook = new THREE.Vector3();
-const _v = new THREE.Vector3();
+let camSmooth = null;
+const _off = new THREE.Vector3();
+const _want = new THREE.Vector3();
+const _look = new THREE.Vector3();
 
-function updateCamera(dt) {
-  const mode = CAMS[camIdx];
-  const fx = Math.sin(car.yaw), fz = Math.cos(car.yaw);
-  const v = Math.abs(car.speed);
+function updateCamera(car, dt, time) {
+  const mode = CAMS[camMode];
+  const s = Math.sin(car.yaw), c = Math.cos(car.yaw);
+  const speedF = clamp(car.kmh / 180, 0, 1);
 
-  if (mode === 'hood') {
-    _v.set(0, 1.52, 0.5).applyMatrix4(car.root.matrixWorld);
-    camPos.copy(_v);
-    camLook.set(0, 1.35, 40).applyMatrix4(car.root.matrixWorld);
-    camera.position.copy(camPos);
+  if (mode === 'bonnet') {
+    _want.set(car.x + s * 0.75, car.y + 1.58, car.z + c * 0.75);
+    _look.set(car.x + s * 40, car.y + 1.9, car.z + c * 40);
+    camera.position.copy(_want);
+    camera.fov = lerp(74, 88, speedF);
   } else {
-    const back = mode === 'wide' ? 15 : 8.6;
-    const up = mode === 'wide' ? 7.5 : 3.5;
-    camPos.set(
-      car.x - fx * (back + v * 0.09),
-      car.root.position.y + up,
-      car.z - fz * (back + v * 0.09)
-    );
-    camLook.set(car.x + fx * 9, car.root.position.y + 1.6, car.z + fz * 9);
-    camera.position.lerp(camPos, 1 - Math.pow(0.0016, dt));
-  }
-  camera.lookAt(camLook);
+    if (mode === 'chase') _off.set(0, 3.0, -7.8 - speedF * 2.4);
+    else _off.set(7.0 + Math.sin(time * 0.13) * 3.5, 3.4, -11.5);
 
-  const wantFov = (mode === 'hood' ? 68 : 60) + Math.min(14, v * 0.34);
-  camera.fov += (wantFov - camera.fov) * Math.min(1, dt * 3);
+    const wx = car.x + _off.x * c + _off.z * s;
+    const wz = car.z - _off.x * s + _off.z * c;
+    const ground = heightAt(wx, wz);
+    _want.set(wx, Math.max(car.y + _off.y, ground + 1.6), wz);
+
+    if (!camSmooth) camSmooth = _want.clone();
+    // position is smoothed, look-at is not
+    camSmooth.lerp(_want, Math.min(1, dt * (mode === 'chase' ? 6.5 : 3.0)));
+    camera.position.copy(camSmooth);
+    _look.set(car.x + s * 6, car.y + 1.35, car.z + c * 6);
+    camera.fov = mode === 'chase' ? lerp(62, 78, speedF) : lerp(48, 56, speedF);
+  }
+
+  camera.lookAt(_look);
   camera.updateProjectionMatrix();
+  sky.position.copy(camera.position);
 }
 
-/* ------------------------------------------------------------------ */
-/* minimap                                                             */
-/* ------------------------------------------------------------------ */
+// ---------------------------------------------------------------------------
+// day / night
+// ---------------------------------------------------------------------------
 
-const mapCv = $('#map');
-const mx = mapCv.getContext('2d');
-const R = mapCv.width / 2;
-const MSCALE = 0.42;          // px per metre
+let night = false;
+let world = null;
+let car = null;
 
+function applyPalette(p, sunDir) {
+  skyMat.uniforms.uTop.value.copy(p.skyTop);
+  skyMat.uniforms.uBottom.value.copy(p.skyBottom);
+  skyMat.uniforms.uSun.value.copy(sunDir);
+  skyMat.uniforms.uSunColor.value.copy(p.sun);
+  skyMat.uniforms.uStars.value = p.stars;
+
+  scene.fog.color.copy(p.fog);
+  scene.fog.near = p.fogNear;
+  scene.fog.far = p.fogFar;
+
+  hemi.color.copy(p.hemiSky);
+  hemi.groundColor.copy(p.hemiGround);
+  hemi.intensity = p.hemiI;
+  ambient.intensity = p.ambient;
+  sun.color.copy(p.sun);
+  sun.intensity = p.sunI;
+  renderer.toneMappingExposure = p.exposure;
+
+  if (world) {
+    world.setNight(p === NIGHT);
+    world.setSun(sunDir, p.sun);
+    world.setFog(p.fog, p.fogNear, p.fogFar);
+  }
+  if (car) car.setNight(p === NIGHT);
+}
+
+function setNight(v) {
+  night = !!v;
+  applyPalette(night ? NIGHT : DAY, night ? SUN_NIGHT : SUN_DAY);
+  const b = document.getElementById('tNight');
+  if (b) b.textContent = night ? 'NGÀY' : 'ĐÊM';
+}
+
+function respawn() { if (car) { car.reset(car.z); camSmooth = null; } }
+
+// ---------------------------------------------------------------------------
+// HUD
+// ---------------------------------------------------------------------------
+
+const el = {
+  speed: document.getElementById('speed'),
+  throttle: document.getElementById('throttleFill'),
+  district: document.getElementById('district'),
+  offroad: document.getElementById('offroad'),
+  stats: document.getElementById('stats'),
+  bar: document.getElementById('barFill'),
+  stage: document.getElementById('stage'),
+  loading: document.getElementById('loading'),
+  map: document.getElementById('map')
+};
+const mapCtx = el.map.getContext('2d');
+
+let hudTimer = 0, fpsCount = 0, fpsT0 = performance.now(), fps = 60;
+
+function updateHud(dt) {
+  hudTimer += dt;
+  fpsCount++;
+
+  el.throttle.style.width = (input.throttle ? 100 : (input.brake ? 100 : 0)) + '%';
+  el.throttle.classList.toggle('brake', !!input.brake && !input.throttle);
+  el.offroad.classList.toggle('on', !car.onRoad);
+
+  if (hudTimer > 0.1) {
+    el.speed.firstChild.nodeValue = Math.round(car.kmh);
+    const d = districtAt(car.z);
+    if (el.district.textContent !== d.name) el.district.textContent = d.name;
+    hudTimer = 0;
+  }
+  const now = performance.now();
+  if (now - fpsT0 > 500) {
+    fps = (fpsCount * 1000) / (now - fpsT0); fpsT0 = now; fpsCount = 0;
+    const i = renderer.info.render;
+    el.stats.textContent =
+      Math.round(fps) + ' fps · ' + (1000 / fps).toFixed(1) + ' ms · ' +
+      i.calls + ' draw · ' + Math.round(i.triangles / 1000) + 'k tri';
+  }
+}
+
+// heading-up circular minimap
+const MAP_RANGE = 620;
 function drawMap() {
-  const cx = car.x, cz = car.z, yaw = car.yaw;
-  const s = Math.sin(yaw), c = Math.cos(yaw);
-  const to = (x, z) => {
-    const ex = x - cx, ez = z - cz;
-    return [R + (ex * c - ez * s) * MSCALE, R - (ex * s + ez * c) * MSCALE];
+  const w = el.map.width, h = el.map.height;
+  const R = w / 2, scale = R / MAP_RANGE;
+  const ctx = mapCtx;
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.beginPath(); ctx.arc(R, R, R - 1, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = 'rgba(10,32,42,0.55)'; ctx.fillRect(0, 0, w, h);
+
+  // heading-up: the car's forward direction always points to the top of the dial
+  const cs = Math.cos(car.yaw) * scale, sn = Math.sin(car.yaw) * scale;
+  ctx.translate(R, R);
+  ctx.transform(cs, -sn, -sn, -cs, 0, 0);
+  ctx.translate(-car.x, -car.z);
+
+  const i0 = Math.max(0, Math.floor((car.z - MAP_RANGE * 1.6 - WORLD.zMin) / 40));
+  const i1 = Math.min(world.roadPts.length / 2 - 1, Math.ceil((car.z + MAP_RANGE * 1.6 - WORLD.zMin) / 40));
+
+  const line = (pts, color, width) => {
+    ctx.beginPath();
+    for (let i = i0; i <= i1; i++) {
+      const x = pts[i * 2], z = pts[i * 2 + 1];
+      if (i === i0) ctx.moveTo(x, z); else ctx.lineTo(x, z);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width / scale;
+    ctx.stroke();
   };
 
-  mx.clearRect(0, 0, R * 2, R * 2);
-  mx.save();
-  mx.beginPath(); mx.arc(R, R, R - 2, 0, Math.PI * 2); mx.clip();
-  mx.fillStyle = '#2f4436'; mx.fillRect(0, 0, R * 2, R * 2);
-
-  const x0 = cx - 700, x1 = cx + 700, step = 20;
-
-  mx.beginPath();
-  for (let x = x0; x <= x1; x += step) { const p = to(x, coastZ(x)); x === x0 ? mx.moveTo(...p) : mx.lineTo(...p); }
-  for (let x = x1; x >= x0; x -= step) { mx.lineTo(...to(x, coastZ(x) - 1400)); }
-  mx.closePath();
-  mx.fillStyle = '#0e5d68'; mx.fill();
-
-  mx.beginPath();
-  for (let x = x0; x <= x1; x += step) { const p = to(x, roadZ(x)); x === x0 ? mx.moveTo(...p) : mx.lineTo(...p); }
-  mx.strokeStyle = '#d9d2c0'; mx.lineWidth = 4; mx.lineCap = 'round'; mx.stroke();
-
-  mx.restore();
-
-  mx.beginPath();
-  mx.moveTo(R, R - 9); mx.lineTo(R - 6, R + 7); mx.lineTo(R + 6, R + 7);
-  mx.closePath();
-  mx.fillStyle = '#e2483a'; mx.fill();
-  mx.strokeStyle = '#f2f7f5'; mx.lineWidth = 1.5; mx.stroke();
-}
-
-/* ------------------------------------------------------------------ */
-/* boot                                                                */
-/* ------------------------------------------------------------------ */
-
-const bar = $('#bootbar i');
-const bootMsg = $('#bootmsg');
-let world, car, tiles = null;
-
-async function progress(p, msg) {
-  bar.style.width = (p * 100).toFixed(0) + '%';
-  bootMsg.textContent = msg;
-  await nextFrame(); await nextFrame();
-}
-
-let nightTarget = 0, night = 0;
-
-async function boot() {
-  setSun(34, 2.35);
-  await progress(0.03, 'Khởi động WebGL…');
-
-  world = await buildWorld(scene, progress);
-  if (world.lamps) world.lamps.material.emissive = new THREE.Color('#ffd9a0');
-  car = createCar(scene, '#c8452f');
-  car.respawn(-400);
-
-  if (GOOGLE_3D_TILES_KEY) {
-    await progress(0.95, 'Nối Google Photorealistic 3D Tiles…');
-    try { tiles = await attachGoogleTiles(scene, camera, renderer); }
-    catch (err) { console.warn('3D Tiles không tải được:', err); }
+  // sea fill, west of the coastline
+  ctx.beginPath();
+  for (let i = i0; i <= i1; i++) {
+    const x = world.coastPts[i * 2], z = world.coastPts[i * 2 + 1];
+    if (i === i0) ctx.moveTo(x, z); else ctx.lineTo(x, z);
   }
+  ctx.lineTo(world.coastPts[i1 * 2] - 4000, world.coastPts[i1 * 2 + 1]);
+  ctx.lineTo(world.coastPts[i0 * 2] - 4000, world.coastPts[i0 * 2 + 1]);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(42,150,160,0.45)';
+  ctx.fill();
 
-  await progress(1, 'Sẵn sàng');
-  const start = $('#start');
-  start.classList.add('ready');
-  start.focus();
-  start.addEventListener('click', () => {
-    $('#boot').remove();
-    $('#hud').classList.add('on');
-    clock.start();
-    loop();
-  }, { once: true });
+  line(world.coastPts, 'rgba(230,225,190,0.85)', 2.5);
+  line(world.roadPts, 'rgba(255,255,255,0.30)', 12);
+  line(world.roadPts, 'rgba(255,209,102,0.95)', 3);
+  ctx.restore();
+
+  // the car, always at the centre pointing up
+  ctx.save();
+  ctx.translate(R, R);
+  ctx.beginPath();
+  ctx.moveTo(0, -7); ctx.lineTo(5, 6); ctx.lineTo(0, 3); ctx.lineTo(-5, 6);
+  ctx.closePath();
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(R, R, R - 1, 0, Math.PI * 2); ctx.stroke();
 }
 
-/* ------------------------------------------------------------------ */
-/* loop                                                                */
-/* ------------------------------------------------------------------ */
+// ---------------------------------------------------------------------------
+// boot
+// ---------------------------------------------------------------------------
 
-const clock = new THREE.Clock(false);
-let elapsed = 0, lastDistrict = null, hudTick = 0;
-
-const speedEl = $('#speed b');
-const placeEl = $('#place b');
-const subEl = $('#place small');
-const thrEl = $('#throttle i');
-const offEl = $('#offroad');
-
-const FOG_DAY = new THREE.Color('#bcd3d6');
-const FOG_NIGHT = new THREE.Color('#06131b');
-const HEMI_DAY = new THREE.Color('#bfe3ec');
-const HEMI_NIGHT = new THREE.Color('#25405a');
-
-function applyNight(dt) {
-  night += (nightTarget - night) * Math.min(1, dt * 1.2);
-  setSun(34 - night * 42, 2.35 + night * 0.25);
-
-  sun.intensity = 2.2 * Math.max(0, 1 - night * 1.05) + 0.04;
-  sun.color.setHSL(0.09, 0.35 * (1 - night) + 0.05, 0.62 - night * 0.2);
-  hemi.intensity = 0.75 * (1 - night) + 0.1;
-  hemi.color.copy(HEMI_DAY).lerp(HEMI_NIGHT, night);
-
-  skyU.turbidity.value = 6 - night * 4;
-  skyU.rayleigh.value = 1.6 + night * 1.6;
-  renderer.toneMappingExposure = 0.85 - night * 0.36;
-
-  scene.fog.color.copy(FOG_DAY).lerp(FOG_NIGHT, night);
-  scene.fog.density = 0.00135 + night * 0.0008;
-
-  for (const b of car.beams) b.intensity = night * 70;
-  if (world.lamps) world.lamps.material.emissiveIntensity = night * 0.3;
-  world.setNight(night, sunDir);
-}
-
-function loop() {
-  requestAnimationFrame(loop);
-  const dt = Math.min(0.05, clock.getDelta());
-  elapsed += dt;
-
-  car.update(dt, readInput());
-  updateCamera(dt);
-  sky.position.copy(camera.position);
-  if (tiles) tiles.update();
-  applyNight(dt);
-  world.update(elapsed);
-
-  sun.position.set(car.x + sunDir.x * 170, car.root.position.y + sunDir.y * 170, car.z + sunDir.z * 170);
-  sun.target.position.set(car.x, car.root.position.y, car.z);
-  sun.target.updateMatrixWorld();
-
-  hudTick += dt;
-  if (hudTick > 0.08) {
-    hudTick = 0;
-    speedEl.textContent = Math.round(car.kmh());
-    thrEl.style.width = Math.min(100, Math.abs(car.throttle) * 100) + '%';
-    offEl.classList.toggle('on', car.offroad && car.kmh() > 4);
-    const d = districtAt(car.x);
-    if (d !== lastDistrict) { lastDistrict = d; placeEl.textContent = d.name; subEl.textContent = d.sub; }
-    drawMap();
-  }
-
-  renderer.render(scene, camera);
-}
-
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
+  renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-boot();
+const clock = new THREE.Clock();
+
+async function boot() {
+  world = await buildWorld(scene, (p, t) => {
+    el.bar.style.width = Math.round(p * 100) + '%';
+    el.stage.textContent = t;
+  });
+
+  car = new Vehicle(world);
+  scene.add(car.group);
+  car.reset(120);                                 // start on Trần Phú
+
+  setNight(false);
+  updateCamera(car, 1, 0);
+
+  el.loading.classList.add('done');
+  setTimeout(() => el.loading.remove(), 700);
+
+  renderer.setAnimationLoop(tick);
+}
+
+function tick() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  if (car.teleported) { camSmooth = null; car.teleported = false; }
+  car.update(dt, readInput());
+  world.update(t, camera.position.x, camera.position.z);
+  updateCamera(car, dt, t);
+
+  // the shadow frustum rides with the car
+  const dir = night ? SUN_NIGHT : SUN_DAY;
+  sun.position.set(car.x + dir.x * 130, car.y + dir.y * 130, car.z + dir.z * 130);
+  sun.target.position.set(car.x, car.y, car.z);
+  sun.target.updateMatrixWorld();
+
+  renderer.render(scene, camera);
+  updateHud(dt);
+  drawMap();
+}
+
+boot().catch(err => {
+  console.error(err);
+  const f = document.getElementById('fatal');
+  f.style.display = 'flex';
+  document.getElementById('fatalMsg').textContent = (err && err.stack) || String(err);
+});
+
+// keep bundlers/linters honest about the shared helpers we re-export for debugging
+window.__vcd = { get car() { return car; }, get world() { return world; }, renderer, scene, camera, heightAt, roadCenterX, roadTangent };

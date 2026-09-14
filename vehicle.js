@@ -1,148 +1,286 @@
-// vehicle.js — one drivable car: arcade physics, no physics engine needed.
+// vehicle.js — one drivable car: geometry generated in code, arcade physics
+// with no physics engine. Local space: +Z is forward, +Y up.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { heightAt, roadZ, coastZ, ROAD_HALF, X_MIN, X_MAX } from './world.js';
+import { heightAt, roadCenterX, roadTangent, WORLD } from './world.js';
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 const _c = new THREE.Color();
-function paint(g, color) {
+function tint(geo, color) {
   _c.set(color);
-  const n = g.attributes.position.count, a = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) { a[i * 3] = _c.r; a[i * 3 + 1] = _c.g; a[i * 3 + 2] = _c.b; }
-  g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+  const n = geo.attributes.position.count;
+  const arr = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { arr[i * 3] = _c.r; arr[i * 3 + 1] = _c.g; arr[i * 3 + 2] = _c.b; }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return geo;
+}
+function box(w, h, d, color, x, y, z, rx) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  tint(g, color);
+  if (rx) g.rotateX(rx);
+  g.translate(x, y, z);
   return g;
 }
-function box(w, h, d, color, x, y, z) {
-  const g = new THREE.BoxGeometry(w, h, d);
-  g.translate(x, y, z);
-  return paint(g, color);
+
+const WHEEL_R = 0.37;
+const WHEELBASE_F = 1.47;
+const WHEELBASE_R = -1.44;
+const TRACK = 0.85;
+
+// a boxy 7-seat crossover — the shape that reads as "Vietnamese family car"
+function buildBody(paintColor) {
+  const g = [];
+  const body = paintColor;
+  const dark = '#1b2024';
+  const glass = '#2b3d47';
+  const trim = '#3a4146';
+
+  // lower body
+  g.push(box(1.86, 0.62, 4.78, body, 0, 0.92, 0));
+  g.push(box(1.90, 0.30, 4.60, trim, 0, 0.60, 0));
+  // sills + arches
+  g.push(box(1.94, 0.22, 1.30, dark, 0, 0.66, WHEELBASE_F));
+  g.push(box(1.94, 0.22, 1.30, dark, 0, 0.66, WHEELBASE_R));
+
+  // cabin
+  g.push(box(1.70, 0.70, 2.86, body, 0, 1.56, -0.12));
+  // windscreen and rear screen, raked
+  g.push(box(1.62, 0.74, 0.14, glass, 0, 1.55, 1.30, -0.42));
+  g.push(box(1.62, 0.70, 0.14, glass, 0, 1.55, -1.55, 0.36));
+  // side glass
+  g.push(box(0.06, 0.50, 2.55, glass, 0.86, 1.62, -0.12));
+  g.push(box(0.06, 0.50, 2.55, glass, -0.86, 1.62, -0.12));
+  // pillars
+  for (const z of [1.18, 0.05, -1.10]) {
+    g.push(box(0.10, 0.72, 0.12, body, 0.86, 1.56, z));
+    g.push(box(0.10, 0.72, 0.12, body, -0.86, 1.56, z));
+  }
+  // roof + rails
+  g.push(box(1.72, 0.10, 2.90, body, 0, 1.92, -0.12));
+  g.push(box(0.10, 0.10, 2.30, trim, 0.72, 2.00, -0.12));
+  g.push(box(0.10, 0.10, 2.30, trim, -0.72, 2.00, -0.12));
+
+  // front: bumper, grille, lamps
+  g.push(box(1.88, 0.34, 0.24, trim, 0, 0.72, 2.40));
+  g.push(box(1.44, 0.26, 0.14, dark, 0, 1.06, 2.38));
+  g.push(box(0.44, 0.20, 0.10, '#e8f0f4', 0.63, 1.08, 2.40));
+  g.push(box(0.44, 0.20, 0.10, '#e8f0f4', -0.63, 1.08, 2.40));
+  // rear: bumper + tail lamps
+  g.push(box(1.88, 0.34, 0.24, trim, 0, 0.72, -2.40));
+  g.push(box(0.34, 0.30, 0.10, '#a8271f', 0.70, 1.10, -2.40));
+  g.push(box(0.34, 0.30, 0.10, '#a8271f', -0.70, 1.10, -2.40));
+  // mirrors
+  g.push(box(0.26, 0.14, 0.12, body, 1.02, 1.46, 1.05));
+  g.push(box(0.26, 0.14, 0.12, body, -1.02, 1.46, 1.05));
+
+  const merged = mergeGeometries(g, false);
+  merged.computeVertexNormals();
+  return merged;
 }
 
-const WHEEL_R = 0.36;
-const MAX_FWD = 41;   // m/s ≈ 148 km/h
-const MAX_REV = 9;
-const ACCEL = 11;
-const BRAKE = 24;
+function buildWheel() {
+  const tyre = new THREE.CylinderGeometry(WHEEL_R, WHEEL_R, 0.27, 14, 1);
+  tyre.rotateZ(Math.PI / 2);
+  tint(tyre, '#17191b');
+  const rim = new THREE.CylinderGeometry(WHEEL_R * 0.58, WHEEL_R * 0.58, 0.29, 10, 1);
+  rim.rotateZ(Math.PI / 2);
+  tint(rim, '#b9bec2');
+  const spoke = new THREE.BoxGeometry(0.30, 0.07, WHEEL_R * 1.0);
+  tint(spoke, '#9aa0a4');
+  const g = mergeGeometries([tyre, rim, spoke], false);
+  g.computeVertexNormals();
+  return g;
+}
 
-export function createCar(scene, color = '#c8452f') {
-  const root = new THREE.Group();
+export function createCar() {
+  const group = new THREE.Group();
+  group.name = 'car';
 
-  // A boxy 7-seat crossover — the workhorse of Vietnamese highways.
-  const g = [
-    box(1.86, 0.52, 4.36, color, 0, 0.62, 0),
-    box(1.80, 0.42, 2.55, color, 0, 1.06, -0.15),
-    box(1.66, 0.62, 2.20, '#12232b', 0, 1.44, -0.20),   // glass
-    box(1.70, 0.10, 2.30, color, 0, 1.76, -0.20),       // roof
-    box(1.62, 0.30, 1.05, color, 0, 0.98, 1.62),        // bonnet
-    box(1.90, 0.26, 0.30, '#2b2f31', 0, 0.62, 2.16),
-    box(1.90, 0.26, 0.30, '#2b2f31', 0, 0.62, -2.16),
-    box(0.42, 0.16, 0.10, '#fff6dc', 0.66, 0.92, 2.20),
-    box(0.42, 0.16, 0.10, '#fff6dc', -0.66, 0.92, 2.20),
-    box(0.40, 0.16, 0.10, '#c0362c', 0.68, 0.96, -2.20),
-    box(0.40, 0.16, 0.10, '#c0362c', -0.68, 0.96, -2.20),
-    box(1.30, 0.07, 1.60, '#5c6266', 0, 1.83, -0.20),   // roof rack
-    box(0.10, 0.16, 4.20, '#2b2f31', 0.94, 0.72, 0),
-    box(0.10, 0.16, 4.20, '#2b2f31', -0.94, 0.72, 0),
-  ];
-  const body = new THREE.Mesh(mergeGeometries(g), new THREE.MeshLambertMaterial({ vertexColors: true }));
-  body.castShadow = true;
-  root.add(body);
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const bodyMesh = new THREE.Mesh(buildBody('#d8dde0'), mat);
+  bodyMesh.castShadow = true;
+  group.add(bodyMesh);
 
-  const tyre = new THREE.CylinderGeometry(WHEEL_R, WHEEL_R, 0.26, 14); tyre.rotateZ(Math.PI / 2);
-  const hub = new THREE.CylinderGeometry(0.14, 0.14, 0.28, 8); hub.rotateZ(Math.PI / 2);
-  const wheelGeo = mergeGeometries([paint(tyre, '#171a1c'), paint(hub, '#9aa0a3')]);
-  const wheelMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-
+  const wheelGeo = buildWheel();
   const wheels = [];
-  for (const [x, z, front] of [[0.88, 1.42, 1], [-0.88, 1.42, 1], [0.88, -1.46, 0], [-0.88, -1.46, 0]]) {
+  const steerPivots = [];
+  const spec = [
+    [TRACK, WHEELBASE_F, true], [-TRACK, WHEELBASE_F, true],
+    [TRACK, WHEELBASE_R, false], [-TRACK, WHEELBASE_R, false]
+  ];
+  for (const [x, z, front] of spec) {
     const pivot = new THREE.Group();
     pivot.position.set(x, WHEEL_R, z);
-    const w = new THREE.Mesh(wheelGeo, wheelMat);
+    const w = new THREE.Mesh(wheelGeo, mat);
     w.castShadow = true;
     pivot.add(w);
-    pivot.userData = { front: !!front, spin: w };
-    root.add(pivot);
-    wheels.push(pivot);
+    group.add(pivot);
+    wheels.push(w);
+    if (front) steerPivots.push(pivot);
   }
 
+  // headlight beams — two cheap spot lights, no shadows, off during the day
   const beams = [];
-  for (const sx of [0.7, -0.7]) {
-    const sl = new THREE.SpotLight(0xfff0cc, 0, 110, 0.42, 0.5, 1.0);
-    sl.position.set(sx, 0.95, 2.2);
-    sl.target.position.set(sx * 0.5, -1.0, 34);
-    root.add(sl, sl.target);
-    beams.push(sl);
+  for (const x of [0.63, -0.63]) {
+    const s = new THREE.SpotLight(0xfff0cf, 0, 120, 0.48, 0.55, 1.4);
+    s.position.set(x, 1.05, 2.35);
+    s.target.position.set(x * 1.4, -0.4, 30);
+    group.add(s, s.target);
+    beams.push(s);
+  }
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0xfff3d4 });
+  const glows = [];
+  for (const x of [0.63, -0.63]) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.22, 0.04), glowMat);
+    m.position.set(x, 1.08, 2.46);
+    m.visible = false;
+    group.add(m);
+    glows.push(m);
   }
 
-  scene.add(root);
+  return { group, wheels, steerPivots, beams, glows };
+}
 
-  const state = {
-    root, wheels, beams, WHEEL_R,
-    x: -400, z: 0, yaw: 0, speed: 0, steer: 0, throttle: 0,
-    offroad: false, prevSpeed: 0,
-  };
+// ---------------------------------------------------------------------------
 
-  state.respawn = (x = state.x) => {
-    state.x = THREE.MathUtils.clamp(x, X_MIN + 60, X_MAX - 60);
-    state.z = roadZ(state.x);
-    const dz = (roadZ(state.x + 4) - roadZ(state.x - 4)) / 8;
-    state.yaw = Math.atan2(1, dz);   // forward = (sin yaw, cos yaw) ≈ (1, dz)
-    state.speed = 0;
-    state.steer = 0;
-  };
-  state.respawn(state.x);
+export class Vehicle {
+  constructor(world) {
+    this.world = world;
+    const car = createCar();
+    this.group = car.group;
+    this.wheels = car.wheels;
+    this.steerPivots = car.steerPivots;
+    this.beams = car.beams;
+    this.glows = car.glows;
 
-  state.update = (dt, input) => {
-    const t = THREE.MathUtils.clamp(input.throttle, -1, 1);
-    state.throttle = t;
+    this.x = 0; this.z = 0; this.yaw = 0;
+    this.speed = 0;
+    this.steer = 0;
+    this.spin = 0;
+    this.pitch = 0; this.roll = 0; this.y = 0;
+    this.onRoad = true;
+    this.inWater = false;
+    this.reset(0);
+  }
 
-    if (t > 0) state.speed += (state.speed < 0 ? BRAKE : ACCEL) * t * dt;
-    else if (t < 0) state.speed += (state.speed > 0 ? BRAKE : ACCEL * 0.6) * t * dt;
+  reset(z) {
+    const zz = clamp(z === undefined ? this.z : z, WORLD.zMin + 40, WORLD.zMax - 40);
+    this.z = zz;
+    this.x = roadCenterX(zz);
+    const t = roadTangent(zz);
+    this.yaw = Math.atan2(t.x, t.z);
+    this.speed = 0;
+    this.steer = 0;
+    this.y = heightAt(this.x, this.z);
+    this.pitch = 0; this.roll = 0;
+    this.teleported = true;
+    this.syncTransform();
+  }
 
-    if (input.handbrake) state.speed *= Math.pow(0.05, dt);
+  lateralOffset() {
+    const t = roadTangent(this.z);
+    return Math.abs(this.x - roadCenterX(this.z)) * t.z;
+  }
 
-    const drag = state.offroad ? 2.6 : 1;
-    state.speed -= state.speed * 0.34 * drag * dt;
-    state.speed -= Math.sign(state.speed) * state.speed * state.speed * 0.0012 * dt;
-    if (Math.abs(state.speed) < 0.08 && Math.abs(t) < 0.01) state.speed = 0;
-    state.speed = THREE.MathUtils.clamp(
-      state.speed, -MAX_REV, state.offroad ? MAX_FWD * 0.45 : MAX_FWD);
+  update(dt, input) {
+    const prevX = this.x, prevZ = this.z;
 
-    state.steer += (input.steer - state.steer) * Math.min(1, dt * 9);
-    const v = Math.abs(state.speed);
-    const authority = Math.min(1, v / 6) * (1 - Math.min(0.62, v / 70));
-    state.yaw += state.steer * 1.8 * authority * (input.handbrake ? 1.5 : 1)
-      * dt * (state.speed < 0 ? -1 : 1);
+    this.onRoad = this.lateralOffset() < WORLD.roadHalfWidth + 0.5;
+    const on = this.onRoad;
 
-    const fx = Math.sin(state.yaw), fz = Math.cos(state.yaw);
-    state.x = THREE.MathUtils.clamp(state.x + fx * state.speed * dt, X_MIN + 20, X_MAX - 20);
-    state.z = THREE.MathUtils.clamp(state.z + fz * state.speed * dt,
-      coastZ(state.x) + 5, roadZ(state.x) + 600);
+    // ---- longitudinal ----
+    const maxF = on ? 50 : 15;          // m/s : ~180 km/h on tarmac, ~54 off it
+    const maxR = on ? 12 : 6;
+    let a = 0;
 
-    state.offroad = Math.abs(state.z - roadZ(state.x)) > ROAD_HALF + 0.6;
-
-    root.position.set(state.x, heightAt(state.x, state.z) + 0.08, state.z);
-
-    const hF = heightAt(state.x + fx * 2, state.z + fz * 2);
-    const hB = heightAt(state.x - fx * 2, state.z - fz * 2);
-    const hR = heightAt(state.x + fz, state.z - fx);
-    const hL = heightAt(state.x - fz, state.z + fx);
-    const squat = THREE.MathUtils.clamp((state.speed - state.prevSpeed) * 0.02, -0.05, 0.05);
-    state.prevSpeed = state.speed;
-
-    root.rotation.set(0, 0, 0);
-    root.rotateY(state.yaw);
-    root.rotateX(Math.atan2(hB - hF, 4) - squat);
-    root.rotateZ(Math.atan2(hR - hL, 2));
-
-    const spin = (state.speed * dt) / WHEEL_R;
-    for (const w of wheels) {
-      w.userData.spin.rotation.x -= spin;
-      if (w.userData.front) w.rotation.y = state.steer * 0.5;
+    if (input.throttle > 0) {
+      a += 9.4 * input.throttle * (1 - clamp(this.speed / maxF, 0, 1));
     }
-    return state;
-  };
+    if (input.brake > 0) {
+      if (this.speed > 0.4) a -= 21 * input.brake;
+      else a -= 6.5 * input.brake * (1 - clamp(-this.speed / maxR, 0, 1));
+    }
+    if (input.handbrake && Math.abs(this.speed) > 0.4) {
+      a -= Math.sign(this.speed) * 24;
+    }
 
-  state.kmh = () => Math.abs(state.speed) * 3.6;
-  return state;
+    // drag: linear rolling resistance + quadratic aero
+    a -= this.speed * (on ? 0.085 : 0.60);
+    a -= Math.sign(this.speed) * this.speed * this.speed * 0.0016;
+
+    this.speed += a * dt;
+    if (!input.throttle && !input.brake && Math.abs(this.speed) < 0.28) this.speed = 0;
+    this.speed = clamp(this.speed, -maxR, maxF);
+
+    // ---- steering ----
+    this.steer += (input.steer - this.steer) * Math.min(1, dt * 8);
+    const authority = 1 / (1 + Math.abs(this.speed) * 0.055);
+    const grip = (input.handbrake ? 0.55 : 1) * (on ? 1 : 0.72);
+    const engage = clamp(Math.abs(this.speed) / 4.5, 0, 1);
+    const yawRate = this.steer * 2.05 * authority * grip * engage * Math.sign(this.speed || 1);
+    this.yaw += yawRate * dt;
+
+    // ---- integrate ----
+    this.x += Math.sin(this.yaw) * this.speed * dt;
+    this.z += Math.cos(this.yaw) * this.speed * dt;
+
+    // keep inside the world
+    this.z = clamp(this.z, WORLD.zMin + 20, WORLD.zMax - 20);
+    this.x = clamp(this.x, WORLD.xMin + 20, WORLD.xMax - 20);
+
+    // ---- the sea is a wall, not a swimming pool ----
+    const hHere = heightAt(this.x, this.z);
+    this.inWater = hHere < 0.9;
+    if (hHere < 0.12) {
+      this.x = prevX; this.z = prevZ;
+      this.speed *= -0.15;
+    } else if (hHere < 0.9) {
+      this.speed *= (1 - 2.2 * dt);           // wet sand and shallow water drag hard
+    }
+
+    // ---- buildings and poles ----
+    const push = this.world.resolve(this.x, this.z, 1.55);
+    if (push) {
+      this.x += push.x; this.z += push.z;
+      const f = Math.sin(this.yaw) * push.x + Math.cos(this.yaw) * push.z;
+      this.speed *= (f * this.speed < 0) ? 0.3 : 0.85;
+    }
+
+    // ---- terrain following: four points around the car ----
+    const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
+    const sample = (lx, lz) => heightAt(this.x + lx * c + lz * s, this.z - lx * s + lz * c);
+    const fl = sample(-0.9, 1.45), fr = sample(0.9, 1.45);
+    const rl = sample(-0.9, -1.45), rr = sample(0.9, -1.45);
+
+    const targetY = Math.max((fl + fr + rl + rr) / 4, 0.15);
+    const targetPitch = -Math.atan2(((fl + fr) - (rl + rr)) / 2, 2.9);
+    const targetRoll = Math.atan2(((fr + rr) - (fl + rl)) / 2, 1.8);
+
+    const k = Math.min(1, dt * 9);
+    this.y += (targetY - this.y) * Math.min(1, dt * 14);
+    this.pitch += (targetPitch - this.pitch) * k;
+    this.roll += (targetRoll - this.roll) * k;
+
+    // ---- visuals ----
+    this.spin += (this.speed / WHEEL_R) * dt;
+    for (const w of this.wheels) w.rotation.x = this.spin;
+    const visualSteer = this.steer * 0.52;
+    for (const p of this.steerPivots) p.rotation.y = visualSteer;
+
+    this.syncTransform();
+  }
+
+  syncTransform() {
+    this.group.position.set(this.x, this.y, this.z);
+    this.group.rotation.set(this.pitch, this.yaw, this.roll, 'YXZ');
+  }
+
+  setNight(night) {
+    for (const b of this.beams) b.intensity = night ? 850 : 0;
+    for (const g of this.glows) g.visible = !!night;
+  }
+
+  get kmh() { return Math.abs(this.speed) * 3.6; }
 }

@@ -39,16 +39,35 @@ with sync_playwright() as p:
     page.screenshot(path=str(artifacts/'welcome.png'))
     page.locator('#startDrive').click()
     page.wait_for_function('__vcd.renderer.info.render.triangles > 0')
+    assert page.evaluate('__vcd.BUILD_ID') == 'NT-CITY-02'
+    assert page.evaluate('__vcd.car.hasDetailedVisual')
+    assert page.evaluate('__vcd.world.city.isRoad(__vcd.car.x,__vcd.car.z)')
+    assert page.evaluate('__vcd.car.onRoad')
+    assert page.evaluate('!__vcd.world.resolve(__vcd.car.x,__vcd.car.z,1.55)')
+    connection = page.evaluate('''async()=>{const {roadY}=await import('./world.js?v=nt-city-02');const v=__vcd,z=2870,x=(v.roadCenterX(z)+v.world.city.originX+80)/2;return {onRoad:v.world.isRoad(x,z),heightError:Math.abs(v.heightAt(x,z)-roadY(z)),collision:!!v.world.resolve(x,z,1.55)};}''')
+    assert connection['onRoad'] and connection['heightError'] < .02 and not connection['collision'], connection
+    page.screenshot(path=str(artifacts/'city-drive.png'))
     # Test actual keyboard mapping in each direction, away from building colliders.
     for key, sign in [('a', 1), ('d', -1)]:
         page.evaluate('__vcd.car.reset(400)')
         page.keyboard.down('w')
         page.wait_for_function('__vcd.car.kmh > 8', timeout=20000)
         before = page.evaluate('__vcd.car.yaw')
+        page.evaluate('''async()=>{const THREE=await import('three');window.__frozenCamera=__vcd.camera.clone();window.__frozenCamera.updateMatrixWorld();window.__THREE=THREE;}''')
         page.keyboard.down(key)
         page.wait_for_function(f'(__vcd.car.yaw - ({before})) * ({sign}) > 0.04', timeout=10000)
+        projected = page.evaluate('''()=>{const {car}=__vcd;const center=new __THREE.Vector3(car.x,car.y+1,car.z).project(__frozenCamera);const front=new __THREE.Vector3(car.x+Math.sin(car.yaw)*3,car.y+1,car.z+Math.cos(car.yaw)*3).project(__frozenCamera);return front.x-center.x;}''')
+        assert projected * sign < 0, {'key':key,'projected_heading':projected}
         page.keyboard.up(key)
         page.keyboard.up('w')
+    # Drive at road speed on a city street, and verify ambient traffic advances.
+    page.evaluate('__vcd.car.reset(2800); __vcd.car.x=__vcd.world.city.originX+80; __vcd.car.yaw=-Math.PI; __vcd.car.y=__vcd.heightAt(__vcd.car.x,__vcd.car.z); __vcd.car.syncTransform()')
+    traffic_before=page.evaluate('__vcd.traffic.cars[0].phase')
+    page.keyboard.down('w')
+    page.wait_for_function('__vcd.car.kmh>12',timeout=20000)
+    assert page.evaluate('__vcd.car.onRoad')
+    assert page.evaluate('__vcd.traffic.cars[0].phase') != traffic_before
+    page.keyboard.up('w')
     page.keyboard.press('r')
     assert page.evaluate('__vcd.car.speed') == 0
     page.keyboard.press('n')

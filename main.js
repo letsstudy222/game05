@@ -2,13 +2,16 @@
 
 import * as THREE from 'three';
 import {
-  buildWorld, heightAt, roadCenterX, roadTangent, districtAt, WORLD
-} from './world.js';
-import { Vehicle } from './vehicle.js';
-import { createRouteMap } from './map.js';
-import { ROUTE_KM } from './route.js';
+  buildWorld, heightAt, roadCenterX, roadY, roadTangent, districtAt, WORLD
+} from './world.js?v=nt-city-02';
+import { Vehicle } from './vehicle.js?v=nt-city-02';
+import { createRouteMap } from './map.js?v=nt-city-02';
+import { createTraffic } from './traffic.js?v=nt-city-02';
+import { loadDetailedCar } from './detailed-car.js?v=nt-city-02';
+import { ROUTE_KM } from './route.js?v=nt-city-02';
 
-let paused = true, routeMap = null, mapWasPaused = true, started = false;
+const BUILD_ID='NT-CITY-02';
+let paused = true, routeMap = null, mapWasPaused = true, started = false, traffic=null;
 let quality = window.matchMedia('(pointer: coarse)').matches ? 'low' : 'balanced';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -215,8 +218,8 @@ function readInput() {
   const right = keys['d'] || keys['arrowright'] || touch.right;
   input.throttle = up ? 1 : 0;
   input.brake = down ? 1 : 0;
-  // Looking forward along +Z, screen-left is local +X.
-  input.steer = (left ? 1 : 0) + (right ? -1 : 0);
+  // Driver command: negative is left, positive is right. Vehicle converts to +Z yaw.
+  input.steer = (left ? -1 : 0) + (right ? 1 : 0);
   input.handbrake = !!(keys[' '] || touch.hand);
   return input;
 }
@@ -249,7 +252,7 @@ function updateCamera(car, dt, time) {
     camera.position.copy(_want);
     camera.fov = lerp(74, 88, speedF);
   } else {
-    if (mode === 'chase') _off.set(0, 3.7, -9.5 - speedF * 2.5);
+    if (mode === 'chase') _off.set(0, 3.25, -8.2 - speedF * 2.5);
     else _off.set(7.0 + Math.sin(time * 0.13) * 3.5, 3.4, -11.5);
 
     const wx = car.x + _off.x * c + _off.z * s;
@@ -306,6 +309,7 @@ function applyPalette(p, sunDir) {
     world.setFog(p.fog, p.fogNear, p.fogFar);
   }
   if (car) car.setNight(p === NIGHT);
+  traffic?.setNight(p === NIGHT);
 }
 
 function setNight(v) {
@@ -368,7 +372,7 @@ function updateHud(dt) {
 }
 
 // heading-up circular minimap
-const MAP_RANGE = 620;
+const MAP_RANGE = 320;
 function drawMap() {
   const w = el.map.width, h = el.map.height;
   const R = w / 2, centerY = h / 2, scale = R / MAP_RANGE;
@@ -411,6 +415,14 @@ function drawMap() {
   ctx.fillStyle = '#386f81';
   ctx.fill();
 
+  if(world.city) {
+    ctx.fillStyle='#b9bfac';
+    for(const b of world.city.footprints)ctx.fillRect(b.x-b.w/2,b.z-b.d/2,b.w,b.d);
+    for(const points of world.city.mapLines) {
+      ctx.beginPath();for(let i=0;i<points.length;i+=2){i?ctx.lineTo(points[i],points[i+1]):ctx.moveTo(points[i],points[i+1]);}
+      ctx.strokeStyle='#e4dfcb';ctx.lineWidth=8/scale;ctx.stroke();ctx.strokeStyle='#778079';ctx.lineWidth=4/scale;ctx.stroke();
+    }
+  }
   line(world.coastPts, 'rgba(230,225,190,0.85)', 2.5);
   line(world.roadPts, '#e0ddc4', 9);
   line(world.roadPts, '#e4b878', 3);
@@ -429,8 +441,8 @@ function drawMap() {
   ctx.strokeStyle = 'rgba(255,255,255,0.18)';
   ctx.lineWidth = 1;
   ctx.strokeRect(0,0,w,h);
-  ctx.fillStyle='#e9e9d4';ctx.font='10px sans-serif';ctx.fillText('200 m',10,h-9);
-  ctx.fillRect(10,h-17,200*scale,2);
+  ctx.fillStyle='#e9e9d4';ctx.font='10px sans-serif';ctx.fillText('100 m',10,h-9);
+  ctx.fillRect(10,h-17,100*scale,2);
 }
 
 // ---------------------------------------------------------------------------
@@ -447,15 +459,19 @@ const clock = new THREE.Clock();
 
 async function boot() {
   world = await buildWorld(scene, (p, t) => {
-    el.bar.style.width = Math.round(p * 100) + '%';
+    el.bar.style.width = Math.round(p * 80) + '%';
     el.stage.textContent = t;
   });
 
   car = new Vehicle(world);
   scene.add(car.group);
-  car.reset(3060);                                 // start on Trần Phú
+  car.reset(3060);
+  el.stage.textContent='Mô hình xe 3D và vật liệu…';
+  await loadDetailedCar(car);
+  el.bar.style.width='95%';
+  traffic=createTraffic(scene,world,roadCenterX,roadY);                                 // start on Trần Phú
 
-  routeMap = await createRouteMap({getCar:()=>car,
+  routeMap = await createRouteMap({getCar:()=>car,getCity:()=>world.city,
     onOpen:()=>{mapWasPaused=paused;paused=true;clearInput();},
     onClose:()=>{paused=mapWasPaused;clearInput();document.activeElement?.blur();},
     travel:z=>{car.reset(z);camSmooth=null;lookSmooth=null;}
@@ -464,6 +480,7 @@ async function boot() {
   applyQuality(quality);
   updateCamera(car, 1, 0);
 
+  el.bar.style.width='100%';
   el.loading.classList.add('done');
   setTimeout(() => el.loading.remove(), 700);
 
@@ -494,6 +511,7 @@ function tick() {
   car.group.rotation.set(visual.pitch,visual.yaw,visual.roll,'YXZ');
   updateCamera(visual,dt,simulationTime);
   world.update(simulationTime,camera.position.x,camera.position.z);
+  traffic?.update(simulationTime,car);
   skyMat.uniforms.uTime.value=simulationTime;
   const dir=night?SUN_NIGHT:SUN_DAY;
   sun.position.set(visual.x+dir.x*130,visual.y+dir.y*130,visual.z+dir.z*130);
@@ -519,9 +537,13 @@ function applyQuality(value) {
   qualityTimer=0;qualityFrames=0;
   document.getElementById('quality').value=value;
 }
-document.getElementById('startDrive').addEventListener('click',()=>{
+function startDrive(inCity) {
+  car.reset(inCity?2950:3060);
+  if(inCity){car.x=world.city.originX+80;car.yaw=-Math.PI;car.y=heightAt(car.x,car.z);car.syncTransform();}
   started=true;paused=false;document.getElementById('welcome').hidden=true;clearInput();document.activeElement?.blur();
-});
+}
+document.getElementById('startDrive').addEventListener('click',()=>startDrive(true));
+document.getElementById('startCoast').addEventListener('click',()=>startDrive(false));
 document.getElementById('resumeDrive').addEventListener('click',()=>{togglePause(false);document.activeElement?.blur();});
 document.getElementById('pauseButton').addEventListener('click',()=>togglePause());
 document.getElementById('resetButton').addEventListener('click',()=>respawn());
@@ -538,4 +560,4 @@ boot().catch(err => {
 });
 
 // keep bundlers/linters honest about the shared helpers we re-export for debugging
-window.__vcd = { get car() { return car; }, get world() { return world; }, renderer, scene, camera, heightAt, roadCenterX, roadTangent, get paused(){return paused;}, get map(){return routeMap;}, get quality(){return quality;}, ROUTE_KM };
+window.__vcd = { get car() { return car; }, get world() { return world; }, renderer, scene, camera, heightAt, roadCenterX, roadTangent, get paused(){return paused;}, get map(){return routeMap;}, get quality(){return quality;}, get traffic(){return traffic;}, BUILD_ID, ROUTE_KM };

@@ -1,8 +1,8 @@
-import { ROUTE, LANDMARKS, ROUTE_KM, latToZ, xToLon, zToLat } from './route.js';
+import { ROUTE, LANDMARKS, ROUTE_KM, latToZ, xToLon, zToLat } from './route.js?v=nt-city-02';
 
-export async function createRouteMap({getCar,onOpen,onClose,travel}) {
+export async function createRouteMap({getCar,getCity=()=>null,onOpen,onClose,travel}) {
   const dialog=document.getElementById('mapDialog'),canvas=document.getElementById('detailMap'),ctx=canvas.getContext('2d');
-  const coast=await fetch('./data/coastline.geojson').then(r=>{if(!r.ok)throw new Error('Không tải được dữ liệu bờ biển');return r.json();});
+  const coast=await fetch('./data/coastline.geojson?v=nt-city-02').then(r=>{if(!r.ok)throw new Error('Không tải được dữ liệu bờ biển');return r.json();});
   let zoom=1,center=[109.205,12.085],width=600,height=600,base=1300,selected=0;
   const pointers=new Map();let pinchDistance=0;
   const project=([lon,lat])=>[width/2+(lon-center[0])*base*zoom*Math.cos(12.085*Math.PI/180),height/2-(lat-center[1])*base*zoom];
@@ -32,6 +32,17 @@ export async function createRouteMap({getCar,onOpen,onClose,travel}) {
     ctx.strokeStyle='#284d4510';ctx.lineWidth=1;
     for(let lon=109.08;lon<109.4;lon+=.05){path([[lon,11.8],[lon,12.35]]);ctx.stroke();}
     for(let lat=11.85;lat<12.35;lat+=.05){path([[109.05,lat],[109.4,lat]]);ctx.stroke();}
+    const city=getCity();
+    if(city && zoom>=1.8) {
+      ctx.fillStyle='#71867845';
+      for(const b of city.footprints) {
+        path([[xToLon(b.x-b.w/2),zToLat(b.z-b.d/2)],[xToLon(b.x+b.w/2),zToLat(b.z-b.d/2)],[xToLon(b.x+b.w/2),zToLat(b.z+b.d/2)],[xToLon(b.x-b.w/2),zToLat(b.z+b.d/2)]]);ctx.closePath();ctx.fill();
+      }
+      for(const line of city.mapLines) {
+        const coordinates=[];for(let i=0;i<line.length;i+=2)coordinates.push([xToLon(line[i]),zToLat(line[i+1])]);
+        path(coordinates);ctx.strokeStyle='#708781';ctx.lineWidth=2;ctx.stroke();
+      }
+    }
     path(ROUTE);ctx.strokeStyle='#fff9e9';ctx.lineWidth=7;ctx.lineJoin='round';ctx.stroke();ctx.strokeStyle='#bf774b';ctx.lineWidth=3;ctx.setLineDash([7,3]);ctx.stroke();ctx.setLineDash([]);
     for(let i=0;i<LANDMARKS.length;i++) {
       const p=LANDMARKS[i],[x,y]=project([p.lon,p.lat]);

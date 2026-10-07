@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#102b32">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23174b50'/%3E%3Ctext x='32' y='48' text-anchor='middle' font-size='52' fill='%23edce8d'%3E≈%3C/text%3E%3C/svg%3E">
-<title>Cung đường ven biển · Nha Trang — Cam Ranh</title>
-<link rel="stylesheet" href="./style.css">
+<title>Nha Trang City Drive · Thành phố biển</title>
+<link rel="stylesheet" href="./style.css?v=nt-city-02">
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"}}</script>
 </head>
 <body>
@@ -16,7 +16,7 @@
   <div id="bar"><div id="barFill"></div></div><div id="stage">Đang khởi tạo…</div>
 </div>
 <div id="hud">
-  <div class="brand"><span class="brand-mark">≈</span><div>CUNG ĐƯỜNG VEN BIỂN<small>NHA TRANG — CAM RANH</small></div></div>
+  <div class="brand"><span class="brand-mark">≈</span><div>NHA TRANG CITY DRIVE<small>THÀNH PHỐ BIỂN · NT-CITY-02</small></div></div>
   <div id="districtBox" class="panel"><span id="districtLabel">ĐANG KHÁM PHÁ</span><div id="district">Trần Phú · Nha Trang</div><div id="journey"><span id="journeyFill"></span></div></div>
   <nav id="toolbar" aria-label="Tùy chọn chuyến đi">
     <button id="mapOpen" title="Bản đồ (M)" aria-label="Mở bản đồ">⌖ <span>Bản đồ</span></button>
@@ -28,7 +28,7 @@
   <div id="keys" class="panel"><div><kbd>W</kbd><kbd>S</kbd> Ga / phanh / lùi <span>·</span> <kbd>A</kbd><kbd>D</kbd> Lái</div><div><kbd>Space</kbd> Phanh tay <span>·</span> <kbd>R</kbd> Về đường <span>·</span> <kbd>M</kbd> Bản đồ</div></div>
   <div id="speedBox" class="panel"><div class="speed-top"><span id="gear">N</span><span>VẬN TỐC</span><span id="driveState">SẴN SÀNG</span></div><div id="speed">0<span>km/h</span></div><div id="throttleTrack"><div id="throttleFill"></div></div><div class="speed-bottom"><span id="distance">0.0 km đã đi</span><span id="cameraHint">THEO XE</span></div></div>
   <button id="mapBox" class="panel" aria-label="Mở bản đồ chi tiết"><span class="map-heading"><span>HÀNH TRÌNH</span><span>↗</span></span><canvas id="map" width="240" height="180"></canvas><span class="map-caption"><span id="miniLocation">Trần Phú</span><span>MỞ BẢN ĐỒ</span></span></button>
-  <div id="credit">Khám phá chậm, tận hưởng nhiều. <span>Three.js · Bờ biển Natural Earth</span></div>
+  <div id="credit">NHA TRANG CITY DRIVE · NT-CITY-02 <span>Bờ biển Natural Earth · <a href="./assets/CREDITS.md" target="_blank" rel="noopener">Xe 3D: Eric Chadwick · CC BY 4.0</a></span></div>
   <div id="stats" hidden></div>
   <div id="touch">
     <button class="tbtn" id="tLeft" aria-label="Rẽ trái">◀</button><button class="tbtn" id="tRight" aria-label="Rẽ phải">▶</button>
@@ -37,18 +37,18 @@
   </div>
 </div>
 <section id="welcome" class="overlay" aria-labelledby="welcomeTitle" hidden>
-  <div class="welcome-card"><span class="eyebrow">MỘT CHUYẾN ĐI KHÔNG VỘI</span><h1 id="welcomeTitle">Theo gió.<br>Về phía biển.</h1><p>Lăn bánh qua hàng dừa Trần Phú, những khúc cua Cù Hin và dải cát Bãi Dài. Chọn góc nhìn, mở bản đồ, rồi cứ thế đi.</p>
+  <div class="welcome-card"><span class="eyebrow">KHÁM PHÁ THÀNH PHỐ BIỂN</span><h1 id="welcomeTitle">Nha Trang.<br>Qua từng góc phố.</h1><p>Rẽ vào những khối phố, hòa vào dòng xe, khám phá quảng trường và đường ven biển. Một thành phố mô phỏng để bạn tự do cầm lái.</p>
   <div class="route-summary"><span>NHA TRANG</span><span>━━━━ ● ━━━━</span><span>CAM RANH</span></div>
-  <button id="startDrive" class="primary">Bắt đầu chuyến đi <span>→</span></button><small>WASD / phím mũi tên để lái · M để mở bản đồ</small></div>
+  <button id="startDrive" class="primary">Lái trong thành phố <span>→</span></button><button id="startCoast" class="coast-start">Đi dọc biển Nha Trang — Cam Ranh →</button><small>WASD / phím mũi tên để lái · M để mở bản đồ</small></div>
 </section>
 <section id="pauseMenu" class="overlay" aria-labelledby="pauseTitle" hidden>
-  <div class="menu-card"><span class="eyebrow">DỪNG LẠI MỘT CHÚT</span><h2 id="pauseTitle">Chuyến đi của bạn</h2><button id="resumeDrive" class="primary">Tiếp tục lái xe →</button><button id="resetButton">Đưa xe về mặt đường</button><label for="quality">Chất lượng hình ảnh</label><select id="quality"><option value="high">Cao · bóng đổ và hình ảnh sắc nét</option><option value="balanced" selected>Cân bằng · mượt và rõ</option><option value="low">Nhẹ · dành cho máy yếu</option></select><label class="check"><input id="showStats" type="checkbox"> Hiện hiệu năng</label><p>Space: phanh tay · S: phanh, giữ để lùi<br>C: góc nhìn · N: ngày / đêm · H: ẩn hướng dẫn</p></div>
+  <div class="menu-card"><span class="eyebrow">DỪNG LẠI MỘT CHÚT</span><h2 id="pauseTitle">Chuyến đi của bạn</h2><button id="resumeDrive" class="primary">Tiếp tục lái xe →</button><button id="resetButton">Đưa xe về mặt đường</button><label for="quality">Chất lượng hình ảnh</label><select id="quality"><option value="high">Cao · bóng đổ và hình ảnh sắc nét</option><option value="balanced" selected>Cân bằng · mượt và rõ</option><option value="low">Nhẹ · dành cho máy yếu</option></select><label class="check"><input id="showStats" type="checkbox"> Hiện hiệu năng</label><small class="build-label">Phiên bản NT-CITY-02 · Thành phố mô phỏng</small><small class="asset-credit">Xe 3D: Eric Chadwick / Darmstadt Graphics Group, ©2024 · <a href="./assets/CREDITS.md" target="_blank" rel="noopener">CC BY 4.0 · Nguồn và thay đổi</a></small><p>Space: phanh tay · S: phanh, giữ để lùi<br>C: góc nhìn · N: ngày / đêm · H: ẩn hướng dẫn</p></div>
 </section>
 <dialog id="mapDialog" aria-labelledby="mapTitle">
   <div class="map-layout"><aside><span class="eyebrow">DỌC MIỀN BIỂN XANH</span><h2 id="mapTitle">Hành trình<br>ven biển</h2><p id="routeLength"></p><div id="stageList"></div><div class="map-note"><strong>Bản đồ tham chiếu địa lý</strong><p>Bờ biển: Natural Earth 1:10m. Tuyến nối các điểm tham chiếu, chưa phải dữ liệu đường OSM. Cảnh 3D được nén quãng đường và dựng cách điệu.</p><a href="https://www.openstreetmap.org/#map=11/12.085/109.21" target="_blank" rel="noopener noreferrer">Đối chiếu trên OpenStreetMap ↗</a></div></aside>
   <div class="map-main"><div class="map-top"><span>⌖ <span id="mapPosition">Vị trí của bạn</span></span><button id="mapClose" aria-label="Đóng bản đồ">✕</button></div><canvas id="detailMap" aria-label="Bản đồ tuyến Nha Trang Cam Ranh; kéo để di chuyển, cuộn để phóng to"></canvas><div class="map-controls"><button id="zoomIn" aria-label="Phóng to">+</button><button id="zoomOut" aria-label="Thu nhỏ">−</button><button id="mapCenter" aria-label="Về vị trí xe">⌖</button><button id="mapFit">Toàn tuyến</button></div><div class="map-legend"><span class="route-dot"></span> Tuyến tham chiếu <span class="car-dot"></span> Xe của bạn <span>Kéo · cuộn / chụm để zoom</span></div></div></div>
 </dialog>
 <div id="fatal" role="alert"><div><h2>Chưa khởi động được chuyến đi.</h2><p>Kiểm tra kết nối mạng và khả năng WebGL của trình duyệt.</p><pre id="fatalMsg"></pre><button onclick="location.reload()">Thử lại</button></div></div>
-<script type="module" src="./main.js"></script>
+<script type="module" src="./main.js?v=nt-city-02"></script>
 <script>window.addEventListener('error',function(e){var message=e.message;if(e.target instanceof HTMLScriptElement)message='Không tải được mô-đun trò chơi. Kiểm tra kết nối đến cdn.jsdelivr.net và tải lại trang.';if(!message)return;document.getElementById('fatal').style.display='flex';document.getElementById('fatalMsg').textContent=message;},true);</script>
 </body></html>

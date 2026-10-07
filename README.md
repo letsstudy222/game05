@@ -1,6 +1,8 @@
-# Cung đường ven biển
+# Nha Trang City Drive · NT-CITY-02
 
-Trò chơi lái xe thư giãn trong trình duyệt, lấy cảm hứng từ tuyến **Nha Trang → Cù Hin → Bãi Dài → Cam Ranh**. Chọn **Bắt đầu chuyến đi** sau khi tải cảnh.
+Bản thử nghiệm lái xe trong một khu phố mô phỏng lấy cảm hứng từ Nha Trang. Chọn **Lái trong thành phố** để bắt đầu trên phố, hoặc **Đi dọc biển** để chạy tuyến Nha Trang → Cù Hin → Bãi Dài → Cam Ranh.
+
+Đây là prototype web độc lập, chưa phải game có quy mô, đồ họa hoặc nội dung tương đương GTA V. Bản NT-CITY-02 ưu tiên mạng đường thành phố, cảm giác lái và xe giao thông; chưa có nhân vật đi bộ, lên/xuống xe, nhiệm vụ hoặc thành phố được khảo sát 1:1.
 
 ## Chạy tại máy
 
@@ -32,6 +34,14 @@ Phục vụ qua HTTP; mở trực tiếp `index.html` bằng `file://` không h�
 
 Bản đồ lớn hỗ trợ kéo, cuộn, chụm hai ngón, nút +/−, định vị xe và toàn tuyến. Bấm tên chặng để xem vị trí; bấm **Lái từ…** để đưa xe đến chặng đó. Mở bản đồ sẽ tạm dừng xe và giữ lại trạng thái tạm dừng trước đó khi đóng.
 
+## Khu phố và phiên bản
+
+- Một khu phố khoảng 630 × 830 m với bốn đường song song, sáu đường cắt ngang nối đường ven biển, 60 khối nhà và các giao lộ có vạch qua đường/đèn tín hiệu.
+- Xe người chơi dùng mô hình **Car Concept** có texture/PBR của Eric Chadwick, Darmstadt Graphics Group GmbH, ©2024, CC BY 4.0; nguồn và thay đổi ghi trong [assets/CREDITS.md](assets/CREDITS.md). Mesh tĩnh được gộp theo vật liệu, bánh xe có pivot quay/lái; kính dùng transparency thay transmission để giảm chi phí dựng hình. Asset local khoảng 11.8 MB, tải trước khi vào game. Xe giao thông dùng mô hình sedan dựng bằng mã; 12 xe giao thông đi theo làn, nhường xe người chơi và giảm tốc trước tín hiệu đỏ trong phố.
+- Công trình lấy cảm hứng từ Trầm Hương trên quảng trường ven biển. Đường phố, kiến trúc, đèn tín hiệu và lịch giao thông đều là mô phỏng, không phải dữ liệu hiện trạng.
+- Bản đồ nhỏ vẽ đường và khối nhà có thể lái trong game. Bản đồ lớn hiển thị thêm phố mô phỏng khi zoom vào Nha Trang, tách khỏi tuyến địa lý tham chiếu.
+- Tài nguyên local và toàn bộ đồ thị import có cùng `?v=nt-city-02`; nhãn NT-CITY-02 xuất hiện trên giao diện. Tăng mã phiên bản của toàn bộ tài nguyên khi phát hành tiếp để tránh trộn module cũ/mới trong cache.
+
 ## Đồ họa và chuyển động
 
 - Sáu chặng, các cụm cảnh 400 m được loại bỏ khi ở xa; địa hình, đường, cây và đồ vật được gộp hoặc dùng instancing.
@@ -58,7 +68,7 @@ Trong môi trường cloud đã có Python Playwright và Chromium:
 python3 tests/smoke.py
 ```
 
-Chạy khi máy chủ HTTP ở trên đang hoạt động. Bài kiểm tra có thể thất bại khi dựng cảnh, điều khiển, phanh/lùi, camera, ngày/đêm, tạm dừng, chuyển chất lượng, zoom/kéo bản đồ hoặc chuyển chặng hỏng. Có kiểm tra desktop và điện thoại, lỗi JavaScript và lỗi shader; ảnh kiểm tra lưu ngoài repository tại `/tmp/game05-artifacts`.
+Chạy khi máy chủ HTTP ở trên đang hoạt động. Bài kiểm tra có thể thất bại khi dựng cảnh, điều khiển, phanh/lùi, camera, ngày/đêm, tạm dừng, chuyển chất lượng, zoom/kéo bản đồ hoặc chuyển chặng hỏng. Có kiểm tra desktop và điện thoại, hướng A/D chiếu qua camera, tốc độ trên phố, xe giao thông, lỗi JavaScript và lỗi shader; ảnh kiểm tra lưu ngoài repository tại `/tmp/game05-artifacts`.
 
 Chromium trong cloud có thể không tin CA của proxy HTTPS. Bài kiểm tra chuyển riêng các yêu cầu jsDelivr qua Python HTTPS dùng proxy hiện có và `SSL_CERT_FILE` của môi trường, **giữ nguyên xác minh TLS**. Trình duyệt của người dùng tải CDN bình thường; ứng dụng không chứa proxy hay cơ chế bỏ qua chứng chỉ.
 

@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { heightAt, roadCenterX, roadTangent, WORLD } from './world.js';
+import { heightAt, roadCenterX, roadTangent, WORLD } from './world.js?v=nt-city-02';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
@@ -35,53 +35,35 @@ const TRACK = 0.85;
 
 // a boxy 7-seat crossover — the shape that reads as "Vietnamese family car"
 function buildBody(paintColor) {
-  const g = [];
-  const body = paintColor;
-  const dark = '#1b2024';
-  const glass = '#2b3d47';
-  const trim = '#3a4146';
-
-  // lower body
-  g.push(box(1.86, 0.62, 4.78, body, 0, 0.92, 0));
-  g.push(box(1.90, 0.30, 4.60, trim, 0, 0.60, 0));
-  // sills + arches
-  g.push(box(1.94, 0.22, 1.30, dark, 0, 0.66, WHEELBASE_F));
-  g.push(box(1.94, 0.22, 1.30, dark, 0, 0.66, WHEELBASE_R));
-
-  // cabin
-  g.push(box(1.70, 0.70, 2.86, body, 0, 1.56, -0.12));
-  // windscreen and rear screen, raked
-  g.push(box(1.62, 0.74, 0.14, glass, 0, 1.55, 1.30, -0.42));
-  g.push(box(1.62, 0.70, 0.14, glass, 0, 1.55, -1.55, 0.36));
-  // side glass
-  g.push(box(0.06, 0.50, 2.55, glass, 0.86, 1.62, -0.12));
-  g.push(box(0.06, 0.50, 2.55, glass, -0.86, 1.62, -0.12));
-  // pillars
-  for (const z of [1.18, 0.05, -1.10]) {
-    g.push(box(0.10, 0.72, 0.12, body, 0.86, 1.56, z));
-    g.push(box(0.10, 0.72, 0.12, body, -0.86, 1.56, z));
+  const shape=new THREE.Shape();
+  shape.moveTo(-2.3,.46);shape.lineTo(-2.3,.78);shape.quadraticCurveTo(-2.12,1.04,-1.45,1.08);
+  shape.lineTo(-1.12,1.55);shape.quadraticCurveTo(-.9,1.76,-.55,1.76);shape.lineTo(.60,1.72);
+  shape.lineTo(1.30,1.17);shape.quadraticCurveTo(2.10,1.08,2.28,.85);shape.lineTo(2.3,.46);shape.closePath();
+  const shell=new THREE.ExtrudeGeometry(shape,{depth:1.72,bevelEnabled:true,bevelThickness:.06,bevelSize:.06,bevelSegments:3,steps:1,curveSegments:8});
+  shell.rotateY(-Math.PI/2);shell.translate(.86,0,0);shell.setIndex(Array.from({length:shell.attributes.position.count},(_,i)=>i));tint(shell,paintColor);
+  const g=[shell],dark='#202b30',glass='#315564';
+  const front=box(1.51,.81,.025,glass,0,1.45,.97,-.91);g.push(front);
+  const rear=box(1.48,.66,.025,glass,0,1.35,-1.31,.62);g.push(rear);
+  for(const side of [-1,1]) {
+    const points=[[-1.27,1.19],[-1.07,1.52],[-.53,1.66],[.56,1.62],[1.10,1.20]];
+    const positions=[],uv=[];
+    for(let i=1;i<points.length-1;i++)for(const idx of (side>0?[0,i,i+1]:[0,i+1,i])){const [z,y]=points[idx];positions.push(side*.925,y,z);uv.push((z+1.3)/2.4,(y-1.1)/.7);}
+    const window=new THREE.BufferGeometry();window.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));window.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));window.setIndex(Array.from({length:positions.length/3},(_,i)=>i));window.computeVertexNormals();tint(window,glass);g.push(window);
+    g.push(box(.04,.52,.065,dark,side*.94,1.44,-.25));
+    for(const z of [-.86,.64])g.push(box(.035,.04,.22,'#b8c2c4',side*.945,1.06,z));
+    g.push(box(.19,.16,.30,paintColor,side*1.04,1.22,.95));
+    g.push(box(.07,.12,3.7,dark,side*.9,.5,0));
   }
-  // roof + rails
-  g.push(box(1.72, 0.10, 2.90, body, 0, 1.92, -0.12));
-  g.push(box(0.10, 0.10, 2.30, trim, 0.72, 2.00, -0.12));
-  g.push(box(0.10, 0.10, 2.30, trim, -0.72, 2.00, -0.12));
-
-  // front: bumper, grille, lamps
-  g.push(box(1.88, 0.34, 0.24, trim, 0, 0.72, 2.40));
-  g.push(box(1.44, 0.26, 0.14, dark, 0, 1.06, 2.38));
-  g.push(box(0.44, 0.20, 0.10, '#e8f0f4', 0.63, 1.08, 2.40));
-  g.push(box(0.44, 0.20, 0.10, '#e8f0f4', -0.63, 1.08, 2.40));
-  // rear: bumper + tail lamps
-  g.push(box(1.88, 0.34, 0.24, trim, 0, 0.72, -2.40));
-  g.push(box(0.34, 0.30, 0.10, '#a8271f', 0.70, 1.10, -2.40));
-  g.push(box(0.34, 0.30, 0.10, '#a8271f', -0.70, 1.10, -2.40));
-  // mirrors
-  g.push(box(0.26, 0.14, 0.12, body, 1.02, 1.46, 1.05));
-  g.push(box(0.26, 0.14, 0.12, body, -1.02, 1.46, 1.05));
-
-  const merged = mergeGeometries(g, false);
-  merged.computeVertexNormals();
-  return merged;
+  g.push(box(1.73,.18,.14,dark,0,.61,2.33),box(1.73,.20,.14,dark,0,.59,-2.33));
+  g.push(box(1.08,.20,.035,dark,0,.85,2.35));
+  for(let i=-4;i<=4;i++)g.push(box(.02,.17,.04,'#adb8bc',i*.12,.86,2.37));
+  for(const side of [-1,1]) {
+    g.push(box(.51,.13,.05,'#edf3ef',side*.59,1.01,2.27));
+    g.push(box(.57,.13,.05,'#c3463c',side*.56,1.00,-2.28));
+    g.push(box(.14,.1,.16,'#b6bec0',side*.56,.48,-2.39));
+  }
+  g.push(box(1.65,.06,.28,paintColor,0,1.13,-2.06));
+  const merged=mergeGeometries(g,false);g.forEach(x=>x.dispose());merged.computeVertexNormals();return merged;
 }
 
 function buildWheel() {
@@ -103,7 +85,7 @@ export function createCar() {
   group.name = 'car';
 
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.36, metalness: 0.28 });
-  const bodyMesh = new THREE.Mesh(buildBody('#e5dfcb'), mat);
+  const bodyMesh = new THREE.Mesh(buildBody('#c5d7de'), mat);
   bodyMesh.castShadow = true;
   group.add(bodyMesh);
 
@@ -111,7 +93,7 @@ export function createCar() {
   const pc=plateCanvas.getContext('2d');pc.fillStyle='#f4f2df';pc.fillRect(0,0,256,64);
   pc.strokeStyle='#333';pc.lineWidth=4;pc.strokeRect(4,4,248,56);pc.fillStyle='#20282b';pc.font='bold 34px sans-serif';pc.textAlign='center';pc.fillText('79A-268.19',128,44);
   const plateTexture=new THREE.CanvasTexture(plateCanvas);plateTexture.colorSpace=THREE.SRGBColorSpace;
-  const plate=new THREE.Mesh(new THREE.PlaneGeometry(.9,.225),new THREE.MeshBasicMaterial({map:plateTexture}));plate.position.set(0,.84,-2.54);plate.rotation.y=Math.PI;group.add(plate);
+  const plate=new THREE.Mesh(new THREE.PlaneGeometry(.9,.225),new THREE.MeshBasicMaterial({map:plateTexture}));plate.position.set(0,.78,-2.425);plate.rotation.y=Math.PI;group.add(plate);
   const wheelGeo = buildWheel();
   const wheels = [];
   const steerPivots = [];
@@ -132,8 +114,8 @@ export function createCar() {
 
   const brakeMat = new THREE.MeshStandardMaterial({ color: '#8d1818', emissive: '#ff301c', emissiveIntensity: 0.15 });
   for (const x of [-0.7, 0.7]) {
-    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.27, 0.04), brakeMat);
-    lamp.position.set(x, 1.1, -2.46); group.add(lamp);
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.10, 0.025), brakeMat);
+    lamp.position.set(x*.8, 1.0, -2.315); group.add(lamp);
   }
   // headlight beams — two cheap spot lights, no shadows, off during the day
   const beams = [];
@@ -147,8 +129,8 @@ export function createCar() {
   const glowMat = new THREE.MeshBasicMaterial({ color: 0xfff3d4 });
   const glows = [];
   for (const x of [0.63, -0.63]) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.22, 0.04), glowMat);
-    m.position.set(x, 1.08, 2.46);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.10, 0.025), glowMat);
+    m.position.set(x, 1.01, 2.32);
     m.visible = false;
     group.add(m);
     glows.push(m);
@@ -206,7 +188,7 @@ export class Vehicle {
     const prevX = this.x, prevZ = this.z;
     const oldSpeed = this.speed;
 
-    this.onRoad = this.lateralOffset() < WORLD.roadHalfWidth + 0.5;
+    this.onRoad = this.world.isRoad ? this.world.isRoad(this.x,this.z) : this.lateralOffset() < WORLD.roadHalfWidth + 0.5;
     const on = this.onRoad;
 
     // ---- longitudinal ----
@@ -239,7 +221,7 @@ export class Vehicle {
     const authority = 1 / (1 + Math.abs(this.speed) * 0.055);
     const grip = (input.handbrake ? 0.55 : 1) * (on ? 1 : 0.72);
     const engage = clamp(Math.abs(this.speed) / 4.5, 0, 1);
-    const yawRate = this.steer * 1.35 * authority * grip * engage * Math.sign(this.speed || 1);
+    const yawRate = -this.steer * 1.35 * authority * grip * engage * Math.sign(this.speed || 1);
     this.yaw += yawRate * dt;
 
     // ---- integrate ----
@@ -283,16 +265,16 @@ export class Vehicle {
     const k = 1 - Math.exp(-dt * 9);
     this.y += (targetY - this.y) * (1 - Math.exp(-dt * 14));
     this.pitch += (targetPitch - clamp(this.acceleration * 0.0014, -0.025, 0.025) - this.pitch) * k;
-    this.roll += (targetRoll + this.steer * Math.min(Math.abs(this.speed) * 0.0018, 0.045) - this.roll) * k;
+    this.roll += (targetRoll - this.steer * Math.min(Math.abs(this.speed) * 0.0018, 0.045) - this.roll) * k;
 
     // ---- visuals ----
     this.spin += (this.speed / WHEEL_R) * dt;
     for (const w of this.wheels) w.rotation.x = this.spin;
-    const visualSteer = this.steer * 0.52;
+    const visualSteer = -this.steer * 0.52;
     for (const p of this.steerPivots) p.rotation.y = visualSteer;
 
     this.distance += Math.hypot(this.x-prevX, this.z-prevZ);
-    this.onRoad = this.lateralOffset() < WORLD.roadHalfWidth + 0.5;
+    this.onRoad = this.world.isRoad ? this.world.isRoad(this.x,this.z) : this.lateralOffset() < WORLD.roadHalfWidth + 0.5;
     this.brakeMat.emissiveIntensity = input.brake || input.handbrake ? 2.5 : 0.15;
     this.syncTransform();
   }
@@ -303,8 +285,9 @@ export class Vehicle {
   }
 
   setNight(night) {
-    for (const b of this.beams) b.intensity = night ? 850 : 0;
+    for (const b of this.beams) { b.intensity = night ? 850 : 0; b.visible=!!night; }
     for (const g of this.glows) g.visible = !!night;
+    for (const m of this.headlightMats || []) m.emissiveIntensity=night?3:.1;
   }
 
   get kmh() { return Math.abs(this.speed) * 3.6; }

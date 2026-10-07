@@ -6,8 +6,9 @@
 // Static geometry is merged into ~400 m chunks so the frustum can throw it away.
 
 import * as THREE from 'three';
-import { routeX, STAGES } from './route.js';
-import { buildCoastalDetails } from './scenery.js';
+import { routeX, STAGES } from './route.js?v=nt-city-02';
+import { buildCoastalDetails } from './scenery.js?v=nt-city-02';
+import { buildCity, CITY, nearCrossing } from './city.js?v=nt-city-02';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // ---------------------------------------------------------------------------
@@ -134,6 +135,11 @@ export function heightAt(x, z) {
   w *= smooth(clamp(d / 22, 0, 1));
   if (w > 0) h = h * (1 - w) + roadY(z) * w;
 
+  const offset=x-CITY.originX;
+  if(z>CITY.south-35 && z<CITY.north+20 && x>roadCenterX(z)-10 && offset<665) {
+    const edge=Math.min(clamp((z-CITY.south+35)/35,0,1),clamp((CITY.north+20-z)/20,0,1),clamp((665-offset)/35,0,1),clamp((x-roadCenterX(z)+10)/20,0,1));
+    h=lerp(h,roadY(z),smooth(edge));
+  }
   return h;
 }
 
@@ -708,6 +714,7 @@ function placeBuildings(rng, colliders) {
   function drop(maker, z, side, offset, extraYaw) {
     const p = sidePoint(z, offset * side);
     const px = p.x, pz = p.z;
+    if (z>CITY.south && z<CITY.north && nearCrossing(pz,18)) return null;
     if (px < coastX(z) + 8) return null;          // never on the sand or in the sea
 
     const b = maker();
@@ -899,6 +906,7 @@ function placeVegetation(rng) {
     if (rng() < 0.35) {
       const x = rx + lerp(dense ? 150 : 95, 620, Math.pow(rng(), 0.6));
       const y = heightAt(x, z);
+      if (z > CITY.south && z < CITY.north && x > CITY.originX + 65 && x < CITY.originX + 650) continue;
       if (y > 1.5 && y < 70) bucket(casu, z, { x, y, z, ry: rng() * 6.28, s: lerp(0.6, 1.3, rng()) });
     }
   }
@@ -1183,6 +1191,9 @@ export async function buildWorld(scene, report) {
   const furniture = placeFurniture(rng, colliders);
   scene.add(furniture.group);
 
+  say(0.92, 'Giao lộ, phố và các khối nhà Nha Trang…'); await frame();
+  const city=buildCity({roadCenterX,roadY,heightAt,rng,colliders});scene.add(city.group);
+
   say(0.94, 'Quán ven biển, bãi cát, thuyền cá…');
   const details = buildCoastalDetails({ heightAt, roadY, sidePoint, coastX, roadCenterX, districtAt, WORLD, rng, colliders });
   scene.add(details.group);
@@ -1203,19 +1214,21 @@ export async function buildWorld(scene, report) {
 
   const cullables = [];
   for (const o of scene.children) {
-    if (o === sea || o === surf || o === boats || o === details.group || o.name === 'sky') continue;
+    if (o === sea || o === surf || o === boats || o === details.group || o.name === 'sky' || o === city.group) continue;
     collectCullables(o, cullables);
   }
 
   say(1, 'Xong.');
 
   return {
-    sea, surf,
+    sea, surf, city,
+    isRoad(x,z){return Math.abs(x-roadCenterX(z))*roadTangent(z).z<WORLD.roadHalfWidth+.5 || city.isRoad(x,z);},
     roadPts: new Float32Array(roadPts),
     coastPts: new Float32Array(coastPts),
 
     update(t, camX, camZ) {
       details.update(t, camZ);
+      city.update(t,camX,camZ);
       windTime.value = t;
       sea.material.uniforms.uTime.value = t;
       surf.material.uniforms.uTime.value = t;
@@ -1245,6 +1258,7 @@ export async function buildWorld(scene, report) {
       surf.material.uniforms.uNight.value = night ? 1 : 0;
       furniture.lampHeads.visible = !!night;
       details.setNight(night);
+      city.setNight(night);
     },
 
     setSun(dir, color) {

@@ -6,6 +6,8 @@
 // Static geometry is merged into ~400 m chunks so the frustum can throw it away.
 
 import * as THREE from 'three';
+import { routeX, STAGES } from './route.js';
+import { buildCoastalDetails } from './scenery.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // ---------------------------------------------------------------------------
@@ -57,20 +59,22 @@ const smooth = t => t * t * (3 - 2 * t);
 const lerp = (a, b, t) => a + (b - a) * t;
 
 // ---------------------------------------------------------------------------
-// road spline + coastline — analytic. The sea shader mirrors coastX() in GLSL,
-// so any change here must be made in GLSL_COAST below as well.
+// Road follows a compressed geographic reference corridor. The coastline in 3D
+// is stylized; the expanded map uses the separate Natural Earth geographic data.
 // ---------------------------------------------------------------------------
 
 export function roadCenterX(z) {
-  return 140 + 70 * Math.sin(z * 0.00055) + 34 * Math.sin(z * 0.0017 + 1.3) + 14 * Math.sin(z * 0.004 + 2.1);
+  return routeX(z);
 }
 
 export function roadY(z) {
-  return 6.0 + 3.2 * Math.sin(z * 0.00042 + 0.4) + 1.6 * Math.sin(z * 0.0013 + 1.9);
+  const ridge = Math.exp(-Math.pow((z - 950) / 420, 2));
+  return 4.2 + ridge * 30 + 1.2 * Math.sin(z * 0.0013);
 }
 
 export function coastX(z) {
-  return roadCenterX(z) - (135 + 34 * Math.sin(z * 0.0009 + 0.7) + 14 * Math.sin(z * 0.0031 + 2.4));
+  const town = smooth(clamp((z - 2380) / 220, 0, 1));
+  return roadCenterX(z) - lerp(100 + 22 * Math.sin(z * 0.002), 54, town);
 }
 
 export function roadTangent(z) {
@@ -127,6 +131,7 @@ export function heightAt(x, z) {
   let w = 0;
   if (dr <= FLAT) w = 1;
   else if (dr < BLEND) w = smooth(1 - (dr - FLAT) / (BLEND - FLAT));
+  w *= smooth(clamp(d / 22, 0, 1));
   if (w > 0) h = h * (1 - w) + roadY(z) * w;
 
   return h;
@@ -136,14 +141,7 @@ export function heightAt(x, z) {
 // districts
 // ---------------------------------------------------------------------------
 
-export const DISTRICTS = [
-  { z0: -3200, z1: -2050, name: 'Bãi Dài — Cam Ranh', kind: 'resort' },
-  { z0: -2050, z1: -1150, name: 'Cam Lâm', kind: 'open' },
-  { z0: -1150, z1: -260, name: 'Làng chài Bình Tân', kind: 'village' },
-  { z0: -260, z1: 980, name: 'Trần Phú — Nha Trang', kind: 'town' },
-  { z0: 980, z1: 1780, name: 'Hòn Chồng', kind: 'rocky' },
-  { z0: 1780, z1: 3200, name: 'Khu phố cổ — 36 phố phường', kind: 'oldquarter' }
-];
+export const DISTRICTS = STAGES;
 
 export function districtAt(z) {
   for (let i = 0; i < DISTRICTS.length; i++) {
@@ -194,8 +192,22 @@ function bucket(map, z, item) {
   a.push(item);
 }
 
-const STATIC_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
+const STATIC_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.87 });
+// World-space grain stays stable as the camera moves; no external texture downloads.
+STATIC_MAT.onBeforeCompile = shader => {
+  shader.vertexShader = 'varying vec3 vDetail;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvDetail = (modelMatrix * vec4(position, 1.0)).xyz;');
+  shader.fragmentShader = 'varying vec3 vDetail;\n' + shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+    float grain = fract(sin(dot(floor(vDetail.xz * 6.0), vec2(127.1,311.7))) * 43758.5453);
+    float ripple = sin(vDetail.x * 3.0 + sin(vDetail.z * 0.8));
+    diffuseColor.rgb *= 0.94 + grain * 0.10 + ripple * 0.018;`);
+};
 const PLANT_MAT = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+const windTime = { value: 0 };
+PLANT_MAT.onBeforeCompile = shader => {
+  shader.uniforms.uWindTime = windTime;
+  shader.vertexShader = 'uniform float uWindTime;\n' + shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+    transformed.x += sin(uWindTime * 0.9 + position.y * 0.8) * pow(max(0.0, position.y - 3.0) / 8.0, 2.0) * 0.16;`);
+};
 
 function mergedMeshes(map, opts) {
   const out = [];
@@ -247,10 +259,12 @@ const ROCK = new THREE.Color('#7b7468');
 const SEABED = new THREE.Color('#3f6a6b');
 
 function terrainColor(x, z, h, out) {
+  const beachWidth = districtAt(z).kind === 'resort' ? 70 : 38;
   if (h < -0.2) {
     out.copy(SEABED).lerp(SAND, clamp(1 + h / 6, 0, 1));
-  } else if (h < 2.4) {
+  } else if (h < 2.4 || (x - coastX(z) > 0 && x - coastX(z) < beachWidth)) {
     out.copy(SAND);
+    out.multiplyScalar(0.84 + 0.16 * smooth(clamp((x - coastX(z)) / 12, 0, 1)));
   } else {
     out.copy(SCRUB).lerp(GREEN, smooth(clamp((h - 2.4) / 26, 0, 1)));
     if (h > 34) out.lerp(ROCK, clamp((h - 34) / 55, 0, 1));
@@ -267,9 +281,10 @@ function buildTerrain() {
   for (let x = -180; x < 320; x += 8) xs.push(x);
   for (let x = 320; x <= WORLD.xMax; x += 30) xs.push(x);
 
-  const dz = 12;
+  const rowsPerSlab = 40;
+  const dz = WORLD.chunk / rowsPerSlab;
   const cols = xs.length;
-  const rowsPerSlab = Math.round(WORLD.chunk / dz);
+
   const slabs = Math.ceil((WORLD.zMax - WORLD.zMin) / WORLD.chunk);
   const tmp = new THREE.Color();
   const meshes = [];
@@ -285,7 +300,12 @@ function buildTerrain() {
       for (let i = 0; i < cols; i++) {
         const k = (j * cols + i) * 3;
         const x = xs[i];
-        const h = heightAt(x, z);
+        let h = heightAt(x, z);
+        // Estuary cut beneath the Bình Tân bridge. The vehicle height sampler
+        // retains the deck elevation, while the terrain mesh sits below it.
+        const riverWidth = 26 + 3 * Math.sin(x * 0.018);
+        const river = smooth(clamp((riverWidth - Math.abs(z - 2200)) / 6, 0, 1));
+        if (x < roadCenterX(2200) + 170) h = lerp(h, -3.5, river);
         pos[k] = x; pos[k + 1] = h; pos[k + 2] = z;
         terrainColor(x, z, h, tmp);
         col[k] = tmp.r; col[k + 1] = tmp.g; col[k + 2] = tmp.b;
@@ -319,15 +339,24 @@ function buildTerrain() {
 // sea + surf
 // ---------------------------------------------------------------------------
 
-// GLSL mirror of coastX(). Keep in sync with the JS above.
+// Sample the same JS coastline in the ocean shader, avoiding divergent shoreline formulas.
 const GLSL_COAST = `
-  float roadCenterX(float z){
-    return 140.0 + 70.0*sin(z*0.00055) + 34.0*sin(z*0.0017+1.3) + 14.0*sin(z*0.004+2.1);
-  }
+  uniform sampler2D uCoastMap;
   float coastX(float z){
-    return roadCenterX(z) - (135.0 + 34.0*sin(z*0.0009+0.7) + 14.0*sin(z*0.0031+2.4));
+    float u = clamp((z + 3200.0) / 6400.0, 0.0, 1.0) * 1023.0;
+    float i = floor(u);
+    float a = texture2D(uCoastMap, vec2((i + 0.5) / 1024.0, 0.5)).r;
+    float b = texture2D(uCoastMap, vec2((min(i + 1.0, 1023.0) + 0.5) / 1024.0, 0.5)).r;
+    return mix(a, b, fract(u));
   }
 `;
+function coastTexture() {
+  const values = new Float32Array(1024 * 4);
+  for (let i = 0; i < 1024; i++) { values[i*4] = coastX(WORLD.zMin + i/1023*6400); values[i*4+3] = 1; }
+  const texture = new THREE.DataTexture(values, 1024, 1, THREE.RGBAFormat, THREE.FloatType);
+  texture.needsUpdate = true;
+  return texture;
+}
 
 function buildSea() {
   const geo = new THREE.PlaneGeometry(2600, WORLD.zMax - WORLD.zMin + 900, 40, 120);
@@ -336,8 +365,9 @@ function buildSea() {
 
   const mat = new THREE.ShaderMaterial({
     uniforms: {
+      uCoastMap: { value: coastTexture() },
       uTime: { value: 0 },
-      uShallow: { value: new THREE.Color('#3cc6bd') },
+      uShallow: { value: new THREE.Color('#37b8b1') },
       uDeep: { value: new THREE.Color('#0d4863') },
       uSun: { value: new THREE.Vector3(0.4, 0.7, 0.5) },
       uSunColor: { value: new THREE.Color('#fff2cf') },
@@ -347,9 +377,11 @@ function buildSea() {
       uFogFar: { value: 2400 }
     },
     vertexShader: `
+      uniform float uTime;
       varying vec3 vW;
       void main(){
         vec4 wp = modelMatrix * vec4(position, 1.0);
+        wp.y += sin(wp.x * 0.035 + wp.z * 0.021 + uTime * 0.7) * 0.22;
         vW = wp.xyz;
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
@@ -361,7 +393,8 @@ function buildSea() {
       ${GLSL_COAST}
       void main(){
         float off = coastX(vW.z) - vW.x;                  // metres offshore
-        float t = clamp(off / 300.0, 0.0, 1.0);
+        if (off < -2.0) discard;
+        float t = clamp(off / 280.0, 0.0, 1.0);
         vec3 col = mix(uShallow, uDeep, pow(t, 0.7));
 
         // ripples live entirely in the fragment shader: the plane stays flat,
@@ -378,6 +411,9 @@ function buildSea() {
 
         col += uSunColor * spec * (1.0 - uNight) * 0.95;
         col = mix(col, uFogColor * 0.9 + uSunColor * 0.1, sheen * 0.45);
+        float crest = pow(max(0.0, sin(off * 0.65 - uTime * 1.6 + sin(vW.z * 0.09))), 12.0);
+        float foam = crest * (1.0 - smoothstep(3.0, 30.0, off));
+        col = mix(col, vec3(0.91, 0.98, 0.97), foam * 0.85);
         col *= 1.0 + 0.035 * (a + b);
         col *= mix(1.0, 0.28, uNight);
 
@@ -398,7 +434,7 @@ function buildSurf() {
   const n = Math.floor((WORLD.zMax - WORLD.zMin) / step);
   const pos = new Float32Array((n + 1) * 2 * 3);
   const uv = new Float32Array((n + 1) * 2 * 2);
-  const OUT = 17, IN = 5;
+  const OUT = 25, IN = 6;
 
   for (let i = 0; i <= n; i++) {
     const z = WORLD.zMin + i * step;
@@ -771,44 +807,43 @@ function placeBuildings(rng, colliders) {
 
 function palmGeometry() {
   const parts = [];
-  const trunk = new THREE.CylinderGeometry(0.17, 0.30, 8.5, 6, 3);
-  tint(trunk, '#8a7658');
+  const trunk = new THREE.CylinderGeometry(0.15, 0.29, 8.5, 10, 8);
+  tint(trunk, '#91775a');
   const p = trunk.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const t = (p.getY(i) + 4.25) / 8.5;
-    p.setX(i, p.getX(i) + t * t * 1.15);
+    p.setX(i, p.getX(i) + t*t*0.9);
   }
-  trunk.translate(0, 4.25, 0);
-  parts.push(trunk);
-
-  for (let f = 0; f < 8; f++) {
-    const fr = new THREE.PlaneGeometry(1.15, 5.4, 1, 3);
-    const q = fr.attributes.position;
-    for (let i = 0; i < q.count; i++) {
-      const t = (q.getY(i) + 2.7) / 5.4;
-      q.setX(i, q.getX(i) * (1 - 0.72 * t) * (0.55 + t * 0.85));
-      q.setZ(i, -t * t * 2.3);
+  trunk.translate(0,4.25,0);parts.push(trunk);
+  for (let f=0;f<9;f++) {
+    const angle=f/9*Math.PI*2;
+    const positions=[],uv=[];
+    for(let k=1;k<=10;k++) {
+      const t=k/11,reach=t*4.8;
+      const y=8.5+Math.sin(t*Math.PI)*0.85-t*t*1.6;
+      const leaf=0.9*Math.sin(t*Math.PI)+0.12;
+      for(const side of [-1,1]) {
+        const points=[[reach-0.15,y,0],[reach+0.30,y-0.15,side*leaf],[reach+0.45,y-0.22,side*leaf*0.85],[reach+0.09,y,0]];
+        for(const idx of [0,1,2,0,2,3]){positions.push(...points[idx]);uv.push(idx%2,idx>1?1:0);}
+      }
     }
-    fr.rotateX(-Math.PI / 2);
-    fr.rotateY((f / 8) * Math.PI * 2 + 0.3);
-    fr.translate(1.15, 8.5, 0);
-    tint(fr, f % 2 ? '#3f7a3a' : '#4f8c42');
-    parts.push(fr);
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+    g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+    g.setIndex(Array.from({length:positions.length/3},(_,i)=>i));
+    g.computeVertexNormals();g.rotateY(angle);g.translate(.9,0,0);tint(g,f%2?'#428144':'#60944a');parts.push(g);
   }
-  const g = mergeGeometries(parts, false);
-  g.computeVertexNormals();
-  return g;
+  for(const x of [-.2,.2])parts.push(cyl(.18,.21,.35,8,'#938346',.9+x,8.15,.12));
+  const g=mergeGeometries(parts,false);g.computeVertexNormals();return g;
 }
 
 function casuarinaGeometry() {
-  const parts = [cyl(0.13, 0.24, 4.2, 5, '#7a6a55', 0, 2.1, 0)];
-  const c1 = new THREE.ConeGeometry(1.7, 8.5, 6, 1);
-  tint(c1, '#2f5a3c'); c1.translate(0, 8.0, 0); parts.push(c1);
-  const c2 = new THREE.ConeGeometry(1.15, 5.2, 6, 1);
-  tint(c2, '#3a6b45'); c2.translate(0, 11.0, 0); parts.push(c2);
-  const g = mergeGeometries(parts, false);
-  g.computeVertexNormals();
-  return g;
+  const parts=[cyl(.13,.23,5.5,8,'#7b6a53',0,2.75,0)];
+  const crowns=[[0,6.4,0,2.3],[-1,5.2,.4,1.7],[1,6.0,-.3,1.8],[.2,8.0,.1,1.6],[0,9.1,0,1.0]];
+  for(const [x,y,z,r] of crowns) {
+    const g=new THREE.SphereGeometry(r,10,7);g.scale(.85,1.25,.85);g.translate(x,y,z);tint(g,y>7?'#557a45':'#416d47');parts.push(g);
+  }
+  const g=mergeGeometries(parts,false);g.computeVertexNormals();return g;
 }
 
 // phượng vĩ — flame tree, red in bloom
@@ -983,7 +1018,8 @@ function placeFurniture(rng, colliders) {
   // low concrete sea wall along the seaward shoulder of the built-up stretches
   for (let z = WORLD.zMin; z < WORLD.zMax; z += 4) {
     const kind = districtAt(z).kind;
-    if (kind !== 'town' && kind !== 'village' && kind !== 'resort') continue;
+    if (kind !== 'town' && kind !== 'village') continue;
+    if (Math.abs(z - 2200) < 30) continue;
     const p = sidePoint(z, -11.4);               // seaward edge of the pavement
     bucket(wall, p.z, box(0.45, 1.5, 4.1, '#d9d3c2', p.x, heightAt(p.x, p.z) + 0.30, p.z,
       p.roadYaw, 0.9 + vnoise(z * 0.2, 0) * 0.2));
@@ -1061,7 +1097,7 @@ function basketBoatGeometry() {
 
 function placeBoats(rng) {
   const items = [];
-  const zc = -705;                 // moored off the fishing village
+  const zc = 2200;                 // moored off the fishing village
   for (let i = 0; i < 26; i++) {
     const z = zc + (rng() - 0.5) * 700;
     items.push({ x: coastX(z) - lerp(6, 70, rng()), y: 0.1, z, ry: rng() * 6.28, s: lerp(0.8, 1.2, rng()) });
@@ -1115,7 +1151,9 @@ function collectCullables(root, out) {
       sphere = o.geometry.boundingSphere;
     }
     if (!sphere) return;
-    out.push({ obj: o, cx: sphere.center.x, cz: sphere.center.z, r: sphere.radius });
+    o.updateWorldMatrix(true, false);
+    const bound = sphere.clone().applyMatrix4(o.matrixWorld);
+    out.push({ obj: o, cx: bound.center.x, cz: bound.center.z, r: bound.radius });
   });
   return out;
 }
@@ -1145,7 +1183,11 @@ export async function buildWorld(scene, report) {
   const furniture = placeFurniture(rng, colliders);
   scene.add(furniture.group);
 
-  say(0.96, 'Thuyền thúng…'); await frame();
+  say(0.94, 'Quán ven biển, bãi cát, thuyền cá…');
+  const details = buildCoastalDetails({ heightAt, roadY, sidePoint, coastX, roadCenterX, districtAt, WORLD, rng, colliders });
+  scene.add(details.group);
+
+  say(0.98, 'Thuyền thúng…'); await frame();
   const boats = placeBoats(rng);
   scene.add(boats);
 
@@ -1161,7 +1203,7 @@ export async function buildWorld(scene, report) {
 
   const cullables = [];
   for (const o of scene.children) {
-    if (o === sea || o === surf || o === boats) continue;
+    if (o === sea || o === surf || o === boats || o === details.group || o.name === 'sky') continue;
     collectCullables(o, cullables);
   }
 
@@ -1173,6 +1215,8 @@ export async function buildWorld(scene, report) {
     coastPts: new Float32Array(coastPts),
 
     update(t, camX, camZ) {
+      details.update(t, camZ);
+      windTime.value = t;
       sea.material.uniforms.uTime.value = t;
       surf.material.uniforms.uTime.value = t;
 
@@ -1200,6 +1244,7 @@ export async function buildWorld(scene, report) {
       sea.material.uniforms.uNight.value = night ? 1 : 0;
       surf.material.uniforms.uNight.value = night ? 1 : 0;
       furniture.lampHeads.visible = !!night;
+      details.setNight(night);
     },
 
     setSun(dir, color) {

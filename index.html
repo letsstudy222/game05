@@ -2,204 +2,53 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Cung đường ven biển — Vietnam Coastal Drive</title>
-<style>
-  :root {
-    --ink: #eaf2f5;
-    --panel: rgba(8, 20, 26, 0.55);
-    --edge: rgba(255, 255, 255, 0.16);
-    --accent: #ffd166;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #06121a; }
-  body {
-    font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    color: var(--ink);
-    -webkit-user-select: none; user-select: none;
-    touch-action: none;
-  }
-  canvas { display: block; }
-
-  /* ---------- loading ---------- */
-  #loading {
-    position: fixed; inset: 0; z-index: 50;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 18px; text-align: center; padding: 24px;
-    background: linear-gradient(180deg, #0b2432 0%, #10404d 45%, #1b6470 100%);
-    transition: opacity .6s ease;
-  }
-  #loading h1 { margin: 0; font-size: clamp(20px, 4vw, 34px); font-weight: 600; letter-spacing: .01em; }
-  #loading p { margin: 0; opacity: .75; font-size: 13px; max-width: 34em; line-height: 1.5; }
-  #bar { width: min(420px, 80vw); height: 4px; border-radius: 3px; background: rgba(255,255,255,.16); overflow: hidden; }
-  #barFill { height: 100%; width: 0%; background: var(--accent); transition: width .25s ease; }
-  #stage { font-size: 12px; opacity: .65; min-height: 1.2em; }
-  #loading.done { opacity: 0; pointer-events: none; }
-
-  /* ---------- hud ---------- */
-  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--edge);
-    border-radius: 12px;
-    backdrop-filter: blur(7px);
-    -webkit-backdrop-filter: blur(7px);
-  }
-
-  #speedBox {
-    position: absolute; left: 18px; bottom: 18px;
-    padding: 12px 16px 11px; min-width: 132px;
-  }
-  #speed { font-size: 38px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
-  #speed span { font-size: 13px; font-weight: 400; opacity: .6; margin-left: 5px; }
-  #throttleTrack {
-    margin-top: 9px; height: 5px; border-radius: 3px;
-    background: rgba(255,255,255,.14); overflow: hidden;
-  }
-  #throttleFill { height: 100%; width: 0%; background: var(--accent); transition: width .06s linear; }
-  #throttleFill.brake { background: #ff6b5e; }
-
-  #districtBox {
-    position: absolute; left: 50%; top: 16px; transform: translateX(-50%);
-    padding: 8px 18px; text-align: center; white-space: nowrap;
-  }
-  #districtLabel { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; opacity: .55; }
-  #district { font-size: 16px; font-weight: 600; margin-top: 2px; }
-
-  #mapBox {
-    position: absolute; right: 18px; bottom: 18px;
-    width: 158px; height: 158px; border-radius: 50%; padding: 0; overflow: hidden;
-  }
-  #map { width: 158px; height: 158px; display: block; }
-
-  #offroad {
-    position: absolute; left: 50%; top: 74px; transform: translateX(-50%);
-    padding: 6px 14px; font-size: 12px; letter-spacing: .06em;
-    color: #ffd9a8; border-color: rgba(255,180,90,.4);
-    opacity: 0; transition: opacity .18s ease;
-  }
-  #offroad.on { opacity: 1; }
-
-  #keys {
-    position: absolute; left: 18px; top: 16px;
-    padding: 10px 13px; font-size: 11.5px; line-height: 1.75; opacity: .9;
-  }
-  #keys b { font-weight: 600; color: var(--accent); font-size: 11px; }
-  #keys.hidden { display: none; }
-
-  #credit {
-    position: absolute; right: 16px; top: 16px;
-    padding: 6px 11px; font-size: 10.5px; opacity: .7; max-width: 240px; text-align: right; line-height: 1.5;
-  }
-
-  #stats {
-    position: absolute; right: 16px; top: 96px;
-    padding: 5px 10px; font-size: 10.5px; opacity: .6;
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* ---------- touch ---------- */
-  #touch { display: none; }
-  body.touch #touch { display: block; }
-  body.touch #keys { display: none; }
-  .tbtn {
-    position: absolute; pointer-events: auto;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 600; letter-spacing: .04em;
-    background: var(--panel); border: 1px solid var(--edge); border-radius: 16px;
-    backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
-    color: var(--ink);
-  }
-  .tbtn.active { background: rgba(255,209,102,.3); border-color: rgba(255,209,102,.6); }
-  #tLeft  { left: 16px;  bottom: 96px; width: 78px; height: 78px; }
-  #tRight { left: 104px; bottom: 96px; width: 78px; height: 78px; }
-  #tGas   { right: 16px; bottom: 96px; width: 88px; height: 88px; border-radius: 50%; }
-  #tBrake { right: 112px; bottom: 96px; width: 72px; height: 72px; border-radius: 50%; }
-  #tHand  { right: 16px; bottom: 194px; width: 88px; height: 40px; font-size: 11px; }
-  #tCam   { right: 16px; top: 96px;  width: 54px; height: 40px; font-size: 11px; }
-  #tNight { right: 16px; top: 144px; width: 54px; height: 40px; font-size: 11px; }
-  #tReset { right: 16px; top: 192px; width: 54px; height: 40px; font-size: 11px; }
-  body.touch #speedBox { bottom: 194px; }
-  body.touch #mapBox { width: 118px; height: 118px; right: 16px; bottom: 244px; }
-  body.touch #map { width: 118px; height: 118px; }
-
-  #fatal {
-    position: fixed; inset: 0; z-index: 99; display: none;
-    align-items: center; justify-content: center; padding: 32px;
-    background: #0d1b22; font-size: 14px; line-height: 1.6;
-  }
-  #fatal pre { white-space: pre-wrap; max-width: 60em; opacity: .8; font-size: 12px; }
-</style>
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
-  }
-}
-</script>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#102b32">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23174b50'/%3E%3Ctext x='32' y='48' text-anchor='middle' font-size='52' fill='%23edce8d'%3E≈%3C/text%3E%3C/svg%3E">
+<title>Cung đường ven biển · Nha Trang — Cam Ranh</title>
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"}}</script>
 </head>
 <body>
-
-<div id="loading">
-  <h1>Cung đường ven biển</h1>
-  <p>Nha Trang → Cam Ranh. Không nhiệm vụ, không đua, không bắn nhau — chỉ lái xe và ngắm cảnh.</p>
-  <div id="bar"><div id="barFill"></div></div>
-  <div id="stage">Đang khởi tạo…</div>
+<div id="loading" role="status">
+  <span class="eyebrow">VIETNAM COASTAL DRIVE</span><h1>Một cung đường.<br>Ngàn khoảnh khắc.</h1>
+  <p>Đang chuẩn bị chuyến đi Nha Trang — Cam Ranh</p>
+  <div id="bar"><div id="barFill"></div></div><div id="stage">Đang khởi tạo…</div>
 </div>
-
 <div id="hud">
-  <div id="keys" class="panel">
-    <b>W / S</b> ga · lùi &nbsp; <b>A / D</b> lái<br>
-    <b>Space</b> phanh tay &nbsp; <b>C</b> góc máy<br>
-    <b>N</b> ngày/đêm &nbsp; <b>R</b> về đường &nbsp; <b>H</b> ẩn bảng
-  </div>
-
-  <div id="districtBox" class="panel">
-    <div id="districtLabel">Khu vực</div>
-    <div id="district">—</div>
-  </div>
-
-  <div id="offroad" class="panel">⚠ Ra khỏi mặt đường — mất độ bám</div>
-
-  <div id="credit" class="panel">
-    Thế giới sinh thủ tục (procedural), không dùng dữ liệu bản đồ ngoài.<br>
-    Dựng bằng three.js (MIT) qua jsDelivr CDN.
-  </div>
-
-  <div id="stats" class="panel">—</div>
-
-  <div id="speedBox" class="panel">
-    <div id="speed">0<span>km/h</span></div>
-    <div id="throttleTrack"><div id="throttleFill"></div></div>
-  </div>
-
-  <div id="mapBox" class="panel"><canvas id="map" width="158" height="158"></canvas></div>
-
+  <div class="brand"><span class="brand-mark">≈</span><div>CUNG ĐƯỜNG VEN BIỂN<small>NHA TRANG — CAM RANH</small></div></div>
+  <div id="districtBox" class="panel"><span id="districtLabel">ĐANG KHÁM PHÁ</span><div id="district">Trần Phú · Nha Trang</div><div id="journey"><span id="journeyFill"></span></div></div>
+  <nav id="toolbar" aria-label="Tùy chọn chuyến đi">
+    <button id="mapOpen" title="Bản đồ (M)" aria-label="Mở bản đồ">⌖ <span>Bản đồ</span></button>
+    <button id="cameraButton" title="Đổi góc nhìn (C)" aria-label="Đổi góc nhìn">◉ <span id="cameraLabel">Theo xe</span></button>
+    <button id="dayButton" title="Ngày / đêm (N)" aria-label="Đổi ngày đêm">☀</button>
+    <button id="pauseButton" title="Tạm dừng (Esc)" aria-label="Tạm dừng">II</button>
+  </nav>
+  <div id="offroad" class="panel">RA KHỎI MẶT ĐƯỜNG · GIẢM TỐC ĐỘ</div>
+  <div id="keys" class="panel"><div><kbd>W</kbd><kbd>S</kbd> Ga / phanh / lùi <span>·</span> <kbd>A</kbd><kbd>D</kbd> Lái</div><div><kbd>Space</kbd> Phanh tay <span>·</span> <kbd>R</kbd> Về đường <span>·</span> <kbd>M</kbd> Bản đồ</div></div>
+  <div id="speedBox" class="panel"><div class="speed-top"><span id="gear">N</span><span>VẬN TỐC</span><span id="driveState">SẴN SÀNG</span></div><div id="speed">0<span>km/h</span></div><div id="throttleTrack"><div id="throttleFill"></div></div><div class="speed-bottom"><span id="distance">0.0 km đã đi</span><span id="cameraHint">THEO XE</span></div></div>
+  <button id="mapBox" class="panel" aria-label="Mở bản đồ chi tiết"><span class="map-heading"><span>HÀNH TRÌNH</span><span>↗</span></span><canvas id="map" width="240" height="180"></canvas><span class="map-caption"><span id="miniLocation">Trần Phú</span><span>MỞ BẢN ĐỒ</span></span></button>
+  <div id="credit">Khám phá chậm, tận hưởng nhiều. <span>Three.js · Bờ biển Natural Earth</span></div>
+  <div id="stats" hidden></div>
   <div id="touch">
-    <div class="tbtn" id="tLeft">◀</div>
-    <div class="tbtn" id="tRight">▶</div>
-    <div class="tbtn" id="tBrake">S</div>
-    <div class="tbtn" id="tGas">GA</div>
-    <div class="tbtn" id="tHand">PHANH TAY</div>
-    <div class="tbtn" id="tCam">GÓC</div>
-    <div class="tbtn" id="tNight">ĐÊM</div>
-    <div class="tbtn" id="tReset">VỀ ĐƯỜNG</div>
+    <button class="tbtn" id="tLeft" aria-label="Rẽ trái">◀</button><button class="tbtn" id="tRight" aria-label="Rẽ phải">▶</button>
+    <button class="tbtn" id="tBrake" aria-label="Phanh và lùi">PHANH</button><button class="tbtn" id="tGas" aria-label="Tăng tốc">GA</button>
+    <button class="tbtn" id="tHand">PHANH TAY</button><button class="tbtn" id="tReset">VỀ ĐƯỜNG</button>
   </div>
 </div>
-
-<div id="fatal"><div><strong>Không khởi động được.</strong><pre id="fatalMsg"></pre></div></div>
-
-<script type="module">
-  import './main.js';
-</script>
-<script>
-  window.addEventListener('error', function (e) {
-    var f = document.getElementById('fatal');
-    if (!f || f.style.display === 'flex') return;
-    f.style.display = 'flex';
-    document.getElementById('fatalMsg').textContent = (e.message || e.error) + '\n' + (e.filename || '');
-  });
-</script>
-</body>
-</html>
+<section id="welcome" class="overlay" aria-labelledby="welcomeTitle" hidden>
+  <div class="welcome-card"><span class="eyebrow">MỘT CHUYẾN ĐI KHÔNG VỘI</span><h1 id="welcomeTitle">Theo gió.<br>Về phía biển.</h1><p>Lăn bánh qua hàng dừa Trần Phú, những khúc cua Cù Hin và dải cát Bãi Dài. Chọn góc nhìn, mở bản đồ, rồi cứ thế đi.</p>
+  <div class="route-summary"><span>NHA TRANG</span><span>━━━━ ● ━━━━</span><span>CAM RANH</span></div>
+  <button id="startDrive" class="primary">Bắt đầu chuyến đi <span>→</span></button><small>WASD / phím mũi tên để lái · M để mở bản đồ</small></div>
+</section>
+<section id="pauseMenu" class="overlay" aria-labelledby="pauseTitle" hidden>
+  <div class="menu-card"><span class="eyebrow">DỪNG LẠI MỘT CHÚT</span><h2 id="pauseTitle">Chuyến đi của bạn</h2><button id="resumeDrive" class="primary">Tiếp tục lái xe →</button><button id="resetButton">Đưa xe về mặt đường</button><label for="quality">Chất lượng hình ảnh</label><select id="quality"><option value="high">Cao · bóng đổ và hình ảnh sắc nét</option><option value="balanced" selected>Cân bằng · mượt và rõ</option><option value="low">Nhẹ · dành cho máy yếu</option></select><label class="check"><input id="showStats" type="checkbox"> Hiện hiệu năng</label><p>Space: phanh tay · S: phanh, giữ để lùi<br>C: góc nhìn · N: ngày / đêm · H: ẩn hướng dẫn</p></div>
+</section>
+<dialog id="mapDialog" aria-labelledby="mapTitle">
+  <div class="map-layout"><aside><span class="eyebrow">DỌC MIỀN BIỂN XANH</span><h2 id="mapTitle">Hành trình<br>ven biển</h2><p id="routeLength"></p><div id="stageList"></div><div class="map-note"><strong>Bản đồ tham chiếu địa lý</strong><p>Bờ biển: Natural Earth 1:10m. Tuyến nối các điểm tham chiếu, chưa phải dữ liệu đường OSM. Cảnh 3D được nén quãng đường và dựng cách điệu.</p><a href="https://www.openstreetmap.org/#map=11/12.085/109.21" target="_blank" rel="noopener noreferrer">Đối chiếu trên OpenStreetMap ↗</a></div></aside>
+  <div class="map-main"><div class="map-top"><span>⌖ <span id="mapPosition">Vị trí của bạn</span></span><button id="mapClose" aria-label="Đóng bản đồ">✕</button></div><canvas id="detailMap" aria-label="Bản đồ tuyến Nha Trang Cam Ranh; kéo để di chuyển, cuộn để phóng to"></canvas><div class="map-controls"><button id="zoomIn" aria-label="Phóng to">+</button><button id="zoomOut" aria-label="Thu nhỏ">−</button><button id="mapCenter" aria-label="Về vị trí xe">⌖</button><button id="mapFit">Toàn tuyến</button></div><div class="map-legend"><span class="route-dot"></span> Tuyến tham chiếu <span class="car-dot"></span> Xe của bạn <span>Kéo · cuộn / chụm để zoom</span></div></div></div>
+</dialog>
+<div id="fatal" role="alert"><div><h2>Chưa khởi động được chuyến đi.</h2><p>Kiểm tra kết nối mạng và khả năng WebGL của trình duyệt.</p><pre id="fatalMsg"></pre><button onclick="location.reload()">Thử lại</button></div></div>
+<script type="module" src="./main.js"></script>
+<script>window.addEventListener('error',function(e){var message=e.message;if(e.target instanceof HTMLScriptElement)message='Không tải được mô-đun trò chơi. Kiểm tra kết nối đến cdn.jsdelivr.net và tải lại trang.';if(!message)return;document.getElementById('fatal').style.display='flex';document.getElementById('fatalMsg').textContent=message;},true);</script>
+</body></html>
